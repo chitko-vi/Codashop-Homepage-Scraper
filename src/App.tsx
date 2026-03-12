@@ -29,11 +29,11 @@ export default function App() {
     setProducts([]);
 
     try {
-      const response = await fetch(`/api/scrape?url=${encodeURIComponent(url)}&category=${encodeURIComponent(category)}`);
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Failed to scrape data");
-      }
+  const response = await fetch(`/api/scrape?url=${encodeURIComponent(url)}&category=${encodeURIComponent(category)}`);
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.error || "Failed to scrape data");
+  }
       const data = await response.json();
       setProducts(data);
     } catch (err: any) {
