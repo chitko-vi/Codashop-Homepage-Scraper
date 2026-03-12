@@ -1,0 +1,5 @@
+{
+  "name": "Codashop Scraper API",
+  "description": "A production-ready web scraper for Codashop products using Playwright and Express.",
+  "requestFramePermissions": []
+}
