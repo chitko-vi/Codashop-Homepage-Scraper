@@ -71,7 +71,7 @@ export default function App() {
           >
             Codashop Tile Scraper
           </motion.h1>
-          <p className="text-zinc-500">Insert Home Page URL and Category Name Below</p>
+          <p className="text-zinc-500">Please insert Page URL and Category Name below</p>
         </div>
 
         <div className="flex bg-zinc-100 p-1 rounded-xl">
@@ -99,7 +99,7 @@ export default function App() {
       >
         <form onSubmit={handleScrape} className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-1">
-            <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Home Page URL</label>
+            <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Page URL</label>
             <input
               type="url"
               value={url}
