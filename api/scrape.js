@@ -12,23 +12,27 @@ export default async function handler(req, res) {
 
     const html = await response.text();
 
-    const productRegex = /"productName":"(.*?)".*?"productUrl":"(.*?)".*?"thumbnailUrl":"(.*?)"/g;
+    const productRegex = /"thumbnailUrl":"(.*?)".*?"productName":"(.*?)".*?"productUrl":"(.*?)"/g;
 
     const results = [];
     let match;
 
     while ((match = productRegex.exec(html)) !== null) {
+
       results.push({
-        title: match[1],
-        url: "https://www.codashop.com" + match[2],
-        image: match[3]
+        title: match[2],
+        url: "https://www.codashop.com" + match[3],
+        image: match[1]
       });
+
     }
 
     res.status(200).json(results);
 
   } catch (error) {
+
     res.status(500).json({ error: error.message });
+
   }
 
 }
