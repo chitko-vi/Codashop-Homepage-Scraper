@@ -69,9 +69,9 @@ export default function App() {
             animate={{ opacity: 1, y: 0 }}
             className="text-4xl font-bold tracking-tight mb-2"
           >
-            Codashop Tile Scraper
+            Codashop Scraper Pro
           </motion.h1>
-          <p className="text-zinc-500">Please insert Page URL and Category Name below</p>
+          <p className="text-zinc-500">Production-grade category extraction with strict scoping</p>
         </div>
 
         <div className="flex bg-zinc-100 p-1 rounded-xl">
