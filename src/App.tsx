@@ -22,22 +22,29 @@ export default function App() {
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
   const [copied, setCopied] = useState(false);
 
+  // ── FIXED: now passes both url AND category, with proper error hints ──────
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     setProducts([]);
+
     try {
       const params = new URLSearchParams({ url, category });
       const response = await fetch(`/api/scrape?${params.toString()}`);
       const data = await response.json();
+
       if (!response.ok) {
-        const hint = data.found?.length ? `\nAvailable categories: ${data.found.join(", ")}` : "";
+        const hint = data.found?.length
+          ? `\nAvailable categories: ${data.found.join(", ")}`
+          : "";
         throw new Error((data.error || "Failed to scrape") + hint);
       }
+
       if (!Array.isArray(data) || data.length === 0) {
         throw new Error(`No products found in category "${category}". Check the category name matches exactly.`);
       }
+
       setProducts(data);
     } catch (err: any) {
       setError(err.message);
@@ -54,635 +61,209 @@ export default function App() {
   };
 
   return (
-    <>
-      {/* Google Fonts — Bangers matches Codashop's category header style */}
-      <link
-        href="https://fonts.googleapis.com/css2?family=Bangers&family=Nunito:wght@400;600;700;800&display=swap"
-        rel="stylesheet"
-      />
-
-      <style>{`
-        :root {
-          --bg-deep:     #110826;
-          --bg-card:     #1e0f3a;
-          --bg-card-hover: #2a1550;
-          --bg-input:    #2a1550;
-          --purple-mid:  #3d1f6e;
-          --accent-green:#22c55e;
-          --accent-green-dark: #16a34a;
-          --accent-gold: #f59e0b;
-          --text-primary:#ffffff;
-          --text-muted:  #a78bca;
-          --border:      #3d2060;
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
-        body {
-          background: var(--bg-deep);
-          color: var(--text-primary);
-          font-family: 'Nunito', sans-serif;
-          min-height: 100vh;
-        }
-
-        /* Subtle grid texture overlay */
-        body::before {
-          content: '';
-          position: fixed;
-          inset: 0;
-          background-image:
-            linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
-          background-size: 40px 40px;
-          pointer-events: none;
-          z-index: 0;
-        }
-
-        .page-wrap {
-          position: relative;
-          z-index: 1;
-          max-width: 1200px;
-          margin: 0 auto;
-          padding: 32px 24px 80px;
-        }
-
-        /* ── Category-style header ───────────────────────── */
-        .coda-heading {
-          font-family: 'Bangers', cursive;
-          font-size: 2.8rem;
-          letter-spacing: 0.04em;
-          color: #fff;
-          text-shadow:
-            3px 3px 0 #7c3aed,
-            -1px -1px 0 #7c3aed,
-            1px -1px 0 #7c3aed,
-            -1px 1px 0 #7c3aed;
-          line-height: 1;
-        }
-
-        .coda-sub {
-          color: var(--text-muted);
-          font-size: 0.9rem;
-          font-weight: 600;
-          margin-top: 6px;
-          letter-spacing: 0.02em;
-        }
-
-        /* ── Navbar strip ────────────────────────────────── */
-        .topbar {
-          background: linear-gradient(90deg, #1a0840, #2d1060, #1a0840);
-          border-bottom: 1px solid var(--border);
-          padding: 12px 24px;
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          position: sticky;
-          top: 0;
-          z-index: 100;
-        }
-
-        .topbar-logo {
-          font-family: 'Bangers', cursive;
-          font-size: 1.5rem;
-          letter-spacing: 0.08em;
-          color: #fff;
-        }
-
-        .topbar-logo span { color: var(--accent-green); }
-
-        /* ── Form card ───────────────────────────────────── */
-        .form-card {
-          background: var(--bg-card);
-          border: 1px solid var(--border);
-          border-radius: 16px;
-          padding: 24px;
-          margin: 32px 0 24px;
-          position: relative;
-          overflow: hidden;
-        }
-
-        .form-card::before {
-          content: '';
-          position: absolute;
-          top: 0; left: 0; right: 0;
-          height: 3px;
-          background: linear-gradient(90deg, #7c3aed, var(--accent-green), #7c3aed);
-        }
-
-        .form-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr auto;
-          gap: 16px;
-          align-items: end;
-        }
-
-        @media (max-width: 640px) {
-          .form-grid { grid-template-columns: 1fr; }
-        }
-
-        .field-label {
-          display: block;
-          font-size: 0.7rem;
-          font-weight: 800;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          color: var(--text-muted);
-          margin-bottom: 8px;
-        }
-
-        .field-input {
-          width: 100%;
-          background: var(--bg-input);
-          border: 1px solid var(--border);
-          border-radius: 10px;
-          padding: 12px 16px;
-          color: var(--text-primary);
-          font-family: 'Nunito', sans-serif;
-          font-size: 0.9rem;
-          font-weight: 600;
-          outline: none;
-          transition: border-color 0.2s, box-shadow 0.2s;
-        }
-
-        .field-input:focus {
-          border-color: #7c3aed;
-          box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
-        }
-
-        .field-input::placeholder { color: #6b4fa0; }
-
-        .btn-scrape {
-          background: var(--accent-green);
-          color: #fff;
-          font-family: 'Nunito', sans-serif;
-          font-weight: 800;
-          font-size: 0.95rem;
-          border: none;
-          border-radius: 10px;
-          padding: 12px 28px;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          white-space: nowrap;
-          transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
-          box-shadow: 0 4px 14px rgba(34, 197, 94, 0.3);
-        }
-
-        .btn-scrape:hover:not(:disabled) {
-          background: var(--accent-green-dark);
-          transform: translateY(-1px);
-          box-shadow: 0 6px 20px rgba(34, 197, 94, 0.4);
-        }
-
-        .btn-scrape:disabled {
-          background: #166534;
-          cursor: not-allowed;
-          box-shadow: none;
-        }
-
-        /* ── View toggle ─────────────────────────────────── */
-        .view-toggle {
-          display: flex;
-          background: var(--bg-card);
-          border: 1px solid var(--border);
-          border-radius: 10px;
-          padding: 4px;
-          gap: 4px;
-        }
-
-        .toggle-btn {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          padding: 8px 16px;
-          border-radius: 7px;
-          font-family: 'Nunito', sans-serif;
-          font-weight: 700;
-          font-size: 0.85rem;
-          border: none;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .toggle-btn.active {
-          background: var(--purple-mid);
-          color: #fff;
-        }
-
-        .toggle-btn.inactive {
-          background: transparent;
-          color: var(--text-muted);
-        }
-
-        .toggle-btn.inactive:hover { color: #fff; }
-
-        /* ── Results header ──────────────────────────────── */
-        .results-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 16px;
-        }
-
-        /* Category label matching Codashop's style */
-        .category-label {
-          font-family: 'Bangers', cursive;
-          font-size: 1.8rem;
-          letter-spacing: 0.05em;
-          color: #fff;
-          text-shadow: 2px 2px 0 #7c3aed;
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-
-        .category-label .count-badge {
-          font-family: 'Nunito', sans-serif;
-          font-size: 0.75rem;
-          font-weight: 800;
-          background: var(--purple-mid);
-          color: var(--text-muted);
-          padding: 3px 10px;
-          border-radius: 20px;
-          letter-spacing: 0.05em;
-        }
-
-        .btn-copy {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          background: var(--bg-card);
-          border: 1px solid var(--border);
-          color: var(--text-muted);
-          font-family: 'Nunito', sans-serif;
-          font-weight: 700;
-          font-size: 0.82rem;
-          padding: 8px 16px;
-          border-radius: 8px;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .btn-copy:hover { color: var(--accent-green); border-color: var(--accent-green); }
-        .btn-copy.copied { color: var(--accent-green); border-color: var(--accent-green); }
-
-        /* ── Table ───────────────────────────────────────── */
-        .table-wrap {
-          background: var(--bg-card);
-          border: 1px solid var(--border);
-          border-radius: 14px;
-          overflow: hidden;
-        }
-
-        .results-table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-
-        .results-table thead tr {
-          background: #2a1550;
-          border-bottom: 1px solid var(--border);
-        }
-
-        .results-table th {
-          padding: 14px 16px;
-          font-size: 0.68rem;
-          font-weight: 800;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          color: var(--text-muted);
-          text-align: left;
-        }
-
-        .results-table tbody tr {
-          border-bottom: 1px solid rgba(61,32,96,0.5);
-          transition: background 0.15s;
-        }
-
-        .results-table tbody tr:last-child { border-bottom: none; }
-        .results-table tbody tr:hover { background: var(--bg-card-hover); }
-
-        .results-table td {
-          padding: 12px 16px;
-          font-size: 0.875rem;
-          vertical-align: middle;
-        }
-
-        .td-num { color: var(--text-muted); font-weight: 700; width: 40px; }
-
-        .td-thumb img {
-          width: 44px;
-          height: 44px;
-          border-radius: 10px;
-          object-fit: cover;
-          background: var(--purple-mid);
-          display: block;
-        }
-
-        .td-title { font-weight: 700; color: #fff; }
-
-        .td-link a {
-          color: var(--text-muted);
-          font-family: monospace;
-          font-size: 0.78rem;
-          text-decoration: none;
-          display: block;
-          max-width: 260px;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          transition: color 0.15s;
-        }
-
-        .td-link a:hover { color: var(--accent-green); }
-
-        /* ── Grid ────────────────────────────────────────── */
-        .product-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-          gap: 16px;
-        }
-
-        .product-card {
-          background: var(--bg-card);
-          border: 1px solid var(--border);
-          border-radius: 14px;
-          overflow: hidden;
-          transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
-          cursor: pointer;
-        }
-
-        .product-card:hover {
-          transform: translateY(-4px);
-          box-shadow: 0 12px 32px rgba(0,0,0,0.4);
-          border-color: var(--purple-mid);
-        }
-
-        .product-card .thumb {
-          aspect-ratio: 1;
-          overflow: hidden;
-          background: var(--purple-mid);
-        }
-
-        .product-card .thumb img {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-          transition: transform 0.4s;
-          display: block;
-        }
-
-        .product-card:hover .thumb img { transform: scale(1.08); }
-
-        .product-card .card-body {
-          padding: 12px;
-        }
-
-        .product-card .card-title {
-          font-weight: 700;
-          font-size: 0.82rem;
-          color: #fff;
-          margin-bottom: 8px;
-          display: -webkit-box;
-          -webkit-line-clamp: 2;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-          min-height: 2.4em;
-        }
-
-        .product-card .card-link {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          font-size: 0.75rem;
-          font-weight: 700;
-          color: var(--accent-green);
-          text-decoration: none;
-          transition: color 0.15s;
-        }
-
-        .product-card .card-link:hover { color: #4ade80; }
-
-        /* ── Error ───────────────────────────────────────── */
-        .error-box {
-          background: rgba(185,28,28,0.15);
-          border: 1px solid rgba(239,68,68,0.4);
-          color: #fca5a5;
-          padding: 16px 20px;
-          border-radius: 12px;
-          margin-bottom: 24px;
-          display: flex;
-          align-items: flex-start;
-          gap: 12px;
-          font-weight: 600;
-          font-size: 0.9rem;
-          white-space: pre-line;
-        }
-
-        /* ── Empty state ─────────────────────────────────── */
-        .empty-state {
-          text-align: center;
-          padding: 80px 20px;
-          color: var(--text-muted);
-        }
-
-        .empty-state svg {
-          opacity: 0.15;
-          margin: 0 auto 16px;
-          display: block;
-        }
-
-        .empty-state p {
-          font-weight: 600;
-          font-size: 0.9rem;
-        }
-      `}</style>
-
-      {/* ── Top navigation bar ── */}
-      <div className="topbar">
-        <span className="topbar-logo">CODA<span>SCRAPER</span></span>
-      </div>
-
-      <div className="page-wrap">
-
-        {/* ── Header ── */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
-          <div>
-            <motion.h1
-              className="coda-heading"
-              initial={{ opacity: 0, y: -16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
-            >
-              TILE SCRAPER
-            </motion.h1>
-            <p className="coda-sub">Insert a Codashop page URL and category name to extract all product tiles</p>
-          </div>
-
-          <div className="view-toggle">
-            <button
-              className={`toggle-btn ${viewMode === "table" ? "active" : "inactive"}`}
-              onClick={() => setViewMode("table")}
-            >
-              <List size={15} /> Table
-            </button>
-            <button
-              className={`toggle-btn ${viewMode === "grid" ? "active" : "inactive"}`}
-              onClick={() => setViewMode("grid")}
-            >
-              <LayoutGrid size={15} /> Grid
-            </button>
-          </div>
+    <div className="min-h-screen p-4 md:p-8 max-w-7xl mx-auto">
+      <header className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div>
+          <motion.h1
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-4xl font-bold tracking-tight mb-2"
+          >
+            Codashop Tile Scraper
+          </motion.h1>
+          <p className="text-zinc-500">Insert Home Page URL and Category Name Below</p>
         </div>
 
-        {/* ── Form ── */}
-        <motion.div
-          className="form-card"
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-        >
-          <form onSubmit={handleScrape} className="form-grid">
-            <div>
-              <label className="field-label">Page URL</label>
-              <input
-                className="field-input"
-                type="url"
-                value={url}
-                onChange={e => setUrl(e.target.value)}
-                placeholder="https://www.codashop.com/en-ph/"
-                required
-              />
-            </div>
-            <div>
-              <label className="field-label">Category Name (Exact)</label>
-              <input
-                className="field-input"
-                type="text"
-                value={category}
-                onChange={e => setCategory(e.target.value)}
-                placeholder="VOUCHERS"
-                required
-              />
-            </div>
-            <div>
-              <button className="btn-scrape" type="submit" disabled={loading}>
-                {loading
-                  ? <><Loader2 size={18} className="animate-spin" /> Scraping...</>
-                  : <><Search size={18} /> Start Scrape</>
-                }
+        <div className="flex bg-zinc-100 p-1 rounded-xl">
+          <button
+            onClick={() => setViewMode("table")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${viewMode === "table" ? "bg-white shadow-sm text-emerald-600" : "text-zinc-500 hover:text-zinc-700"}`}
+          >
+            <List className="w-4 h-4" />
+            Table
+          </button>
+          <button
+            onClick={() => setViewMode("grid")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${viewMode === "grid" ? "bg-white shadow-sm text-emerald-600" : "text-zinc-500 hover:text-zinc-700"}`}
+          >
+            <LayoutGrid className="w-4 h-4" />
+            Grid
+          </button>
+        </div>
+      </header>
+
+      <motion.section
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-200 mb-8"
+      >
+        <form onSubmit={handleScrape} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Home Page URL</label>
+            <input
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://www.codashop.com/en-ph/"
+              className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Category Name (Exact)</label>
+            <input
+              type="text"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="VOUCHERS"
+              className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+              required
+            />
+          </div>
+          <div className="flex items-end">
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-semibold p-3 rounded-xl transition-colors flex items-center justify-center gap-2"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="animate-spin w-5 h-5" />
+                  Scraping...
+                </>
+              ) : (
+                <>
+                  <Search className="w-5 h-5" />
+                  Start Scrape
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </motion.section>
+
+      <AnimatePresence mode="wait">
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl mb-8 flex items-center gap-3"
+          >
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <p className="whitespace-pre-line">{error}</p>
+          </motion.div>
+        )}
+
+        {products.length > 0 ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="space-y-4"
+          >
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-semibold text-zinc-700">
+                Found {products.length} products in "{category}"
+              </h2>
+              <button
+                onClick={copyToClipboard}
+                className="flex items-center gap-2 text-sm font-medium text-zinc-500 hover:text-emerald-600 transition-colors"
+              >
+                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                {copied ? "Copied!" : "Copy TSV"}
               </button>
             </div>
-          </form>
-        </motion.div>
 
-        <AnimatePresence mode="wait">
-
-          {/* ── Error ── */}
-          {error && (
-            <motion.div
-              className="error-box"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-            >
-              <AlertCircle size={18} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span>{error}</span>
-            </motion.div>
-          )}
-
-          {/* ── Results ── */}
-          {products.length > 0 ? (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} key="results">
-
-              <div className="results-header">
-                <div className="category-label">
-                  {category.toUpperCase()}
-                  <span className="count-badge">{products.length} PRODUCTS</span>
-                </div>
-                <button
-                  className={`btn-copy ${copied ? "copied" : ""}`}
-                  onClick={copyToClipboard}
-                >
-                  {copied ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Copy TSV</>}
-                </button>
-              </div>
-
-              {viewMode === "table" ? (
-                <div className="table-wrap">
-                  <table className="results-table">
+            {viewMode === "table" ? (
+              <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Thumb</th>
-                        <th>Title</th>
-                        <th>Product URL</th>
-                        <th>Image URL</th>
+                      <tr className="bg-zinc-50 border-b border-zinc-200">
+                        <th className="p-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">#</th>
+                        <th className="p-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">Thumbnail</th>
+                        <th className="p-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">Title</th>
+                        <th className="p-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">URL</th>
+                        <th className="p-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">Image URL</th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody className="divide-y divide-zinc-100">
                       {products.map((p, i) => (
-                        <tr key={i}>
-                          <td className="td-num">{i + 1}</td>
-                          <td className="td-thumb">
-                            <img src={p.image} alt={p.title} referrerPolicy="no-referrer" />
+                        <tr key={i} className="hover:bg-zinc-50 transition-colors">
+                          <td className="p-4 text-sm text-zinc-400">{i + 1}</td>
+                          <td className="p-4">
+                            <img
+                              src={p.image}
+                              alt={p.title}
+                              referrerPolicy="no-referrer"
+                              className="w-10 h-10 rounded-lg object-cover bg-zinc-100"
+                            />
                           </td>
-                          <td className="td-title">{p.title}</td>
-                          <td className="td-link">
-                            <a href={p.url} target="_blank" rel="noopener noreferrer">{p.url}</a>
+                          <td className="p-4 text-sm font-medium text-zinc-900">{p.title}</td>
+                          <td className="p-4 text-sm text-zinc-500 font-mono truncate max-w-xs">
+                            <a href={p.url} target="_blank" rel="noopener noreferrer" className="hover:text-emerald-600 underline decoration-zinc-200 underline-offset-4">
+                              {p.url}
+                            </a>
                           </td>
-                          <td className="td-link">
-                            <a href={p.image} target="_blank" rel="noopener noreferrer">{p.image}</a>
+                          <td className="p-4 text-sm text-zinc-500 font-mono truncate max-w-xs">
+                            <a href={p.image} target="_blank" rel="noopener noreferrer" className="hover:text-emerald-600 underline decoration-zinc-200 underline-offset-4">
+                              {p.image}
+                            </a>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              ) : (
-                <div className="product-grid">
-                  {products.map((product, idx) => (
-                    <motion.div
-                      key={idx}
-                      className="product-card"
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: idx * 0.025 }}
-                    >
-                      <div className="thumb">
-                        <img src={product.image} alt={product.title} referrerPolicy="no-referrer" />
-                      </div>
-                      <div className="card-body">
-                        <p className="card-title">{product.title}</p>
-                        
-                          href={product.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="card-link"
-                        >
-                          View Product <ExternalLink size={11} />
-                        </a>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
-            </motion.div>
-
-          ) : !loading && !error && (
-            <motion.div
-              className="empty-state"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              key="empty"
-            >
-              <Package size={56} />
-              <p>No products to display. Start a scrape to see results.</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                {products.map((product, idx) => (
+                  <motion.div
+                    key={idx}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: idx * 0.02 }}
+                    className="group bg-white rounded-2xl border border-zinc-200 overflow-hidden hover:shadow-md transition-all"
+                  >
+                    <div className="aspect-square bg-zinc-100 relative overflow-hidden">
+                      <img
+                        src={product.image}
+                        alt={product.title}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                      />
+                    </div>
+                    <div className="p-4">
+                      <h3 className="font-semibold text-sm mb-3 line-clamp-2 min-h-[2.5rem]">
+                        {product.title}
+                      </h3>
+                      
+                        href={product.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 hover:text-emerald-700"
+                      >
+                        View Product
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        ) : !loading && !error && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="text-center py-20 text-zinc-400"
+          >
+            <Package className="w-12 h-12 mx-auto mb-4 opacity-20" />
+            <p>No products to display. Start a scrape to see results.</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
