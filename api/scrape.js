@@ -1,6 +1,6 @@
 export default async function handler(req, res) {
 
-  const { url, category } = req.query;
+  const { url } = req.query;
 
   try {
 
@@ -18,21 +18,17 @@ export default async function handler(req, res) {
     let match;
 
     while ((match = productRegex.exec(html)) !== null) {
-
       results.push({
         title: match[1],
         url: "https://www.codashop.com" + match[2],
         image: match[3]
       });
-
     }
 
     res.status(200).json(results);
 
   } catch (error) {
-
     res.status(500).json({ error: error.message });
-
   }
 
 }
