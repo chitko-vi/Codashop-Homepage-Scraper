@@ -55,7 +55,6 @@ export default function App() {
 
   return (
     <>
-      {/* Google Fonts — Bangers matches Codashop's category header style */}
       <link
         href="https://fonts.googleapis.com/css2?family=Bangers&family=Nunito:wght@400;600;700;800&display=swap"
         rel="stylesheet"
@@ -63,17 +62,16 @@ export default function App() {
 
       <style>{`
         :root {
-          --bg-deep:     #110826;
-          --bg-card:     #1e0f3a;
-          --bg-card-hover: #2a1550;
-          --bg-input:    #2a1550;
-          --purple-mid:  #3d1f6e;
-          --accent-green:#22c55e;
+          --bg-deep:        #110826;
+          --bg-card:        #1e0f3a;
+          --bg-card-hover:  #2a1550;
+          --bg-input:       #2a1550;
+          --purple-mid:     #3d1f6e;
+          --accent-green:   #22c55e;
           --accent-green-dark: #16a34a;
-          --accent-gold: #f59e0b;
-          --text-primary:#ffffff;
-          --text-muted:  #a78bca;
-          --border:      #3d2060;
+          --text-primary:   #ffffff;
+          --text-muted:     #a78bca;
+          --border:         #3d2060;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -85,7 +83,6 @@ export default function App() {
           min-height: 100vh;
         }
 
-        /* Subtle grid texture overlay */
         body::before {
           content: '';
           position: fixed;
@@ -106,7 +103,6 @@ export default function App() {
           padding: 32px 24px 80px;
         }
 
-        /* ── Category-style header ───────────────────────── */
         .coda-heading {
           font-family: 'Bangers', cursive;
           font-size: 2.8rem;
@@ -128,7 +124,6 @@ export default function App() {
           letter-spacing: 0.02em;
         }
 
-        /* ── Navbar strip ────────────────────────────────── */
         .topbar {
           background: linear-gradient(90deg, #1a0840, #2d1060, #1a0840);
           border-bottom: 1px solid var(--border);
@@ -150,7 +145,6 @@ export default function App() {
 
         .topbar-logo span { color: var(--accent-green); }
 
-        /* ── Form card ───────────────────────────────────── */
         .form-card {
           background: var(--bg-card);
           border: 1px solid var(--border);
@@ -178,6 +172,7 @@ export default function App() {
 
         @media (max-width: 640px) {
           .form-grid { grid-template-columns: 1fr; }
+          .coda-heading { font-size: 2rem; }
         }
 
         .field-label {
@@ -206,7 +201,7 @@ export default function App() {
 
         .field-input:focus {
           border-color: #7c3aed;
-          box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+          box-shadow: 0 0 0 3px rgba(124,58,237,0.2);
         }
 
         .field-input::placeholder { color: #6b4fa0; }
@@ -226,13 +221,13 @@ export default function App() {
           gap: 8px;
           white-space: nowrap;
           transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
-          box-shadow: 0 4px 14px rgba(34, 197, 94, 0.3);
+          box-shadow: 0 4px 14px rgba(34,197,94,0.3);
         }
 
         .btn-scrape:hover:not(:disabled) {
           background: var(--accent-green-dark);
           transform: translateY(-1px);
-          box-shadow: 0 6px 20px rgba(34, 197, 94, 0.4);
+          box-shadow: 0 6px 20px rgba(34,197,94,0.4);
         }
 
         .btn-scrape:disabled {
@@ -241,7 +236,6 @@ export default function App() {
           box-shadow: none;
         }
 
-        /* ── View toggle ─────────────────────────────────── */
         .view-toggle {
           display: flex;
           background: var(--bg-card);
@@ -277,15 +271,15 @@ export default function App() {
 
         .toggle-btn.inactive:hover { color: #fff; }
 
-        /* ── Results header ──────────────────────────────── */
         .results-header {
           display: flex;
           justify-content: space-between;
           align-items: center;
           margin-bottom: 16px;
+          flex-wrap: wrap;
+          gap: 12px;
         }
 
-        /* Category label matching Codashop's style */
         .category-label {
           font-family: 'Bangers', cursive;
           font-size: 1.8rem;
@@ -297,7 +291,7 @@ export default function App() {
           gap: 10px;
         }
 
-        .category-label .count-badge {
+        .count-badge {
           font-family: 'Nunito', sans-serif;
           font-size: 0.75rem;
           font-weight: 800;
@@ -327,7 +321,6 @@ export default function App() {
         .btn-copy:hover { color: var(--accent-green); border-color: var(--accent-green); }
         .btn-copy.copied { color: var(--accent-green); border-color: var(--accent-green); }
 
-        /* ── Table ───────────────────────────────────────── */
         .table-wrap {
           background: var(--bg-card);
           border: 1px solid var(--border);
@@ -397,7 +390,6 @@ export default function App() {
 
         .td-link a:hover { color: var(--accent-green); }
 
-        /* ── Grid ────────────────────────────────────────── */
         .product-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -435,9 +427,7 @@ export default function App() {
 
         .product-card:hover .thumb img { transform: scale(1.08); }
 
-        .product-card .card-body {
-          padding: 12px;
-        }
+        .product-card .card-body { padding: 12px; }
 
         .product-card .card-title {
           font-weight: 700;
@@ -464,7 +454,6 @@ export default function App() {
 
         .product-card .card-link:hover { color: #4ade80; }
 
-        /* ── Error ───────────────────────────────────────── */
         .error-box {
           background: rgba(185,28,28,0.15);
           border: 1px solid rgba(239,68,68,0.4);
@@ -480,7 +469,6 @@ export default function App() {
           white-space: pre-line;
         }
 
-        /* ── Empty state ─────────────────────────────────── */
         .empty-state {
           text-align: center;
           padding: 80px 20px;
@@ -499,14 +487,14 @@ export default function App() {
         }
       `}</style>
 
-      {/* ── Top navigation bar ── */}
+      {/* Top bar */}
       <div className="topbar">
         <span className="topbar-logo">CODA<span>SCRAPER</span></span>
       </div>
 
       <div className="page-wrap">
 
-        {/* ── Header ── */}
+        {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
           <div>
             <motion.h1
@@ -536,7 +524,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* ── Form ── */}
+        {/* Form */}
         <motion.div
           className="form-card"
           initial={{ opacity: 0, y: 16 }}
@@ -579,7 +567,7 @@ export default function App() {
 
         <AnimatePresence mode="wait">
 
-          {/* ── Error ── */}
+          {/* Error */}
           {error && (
             <motion.div
               className="error-box"
@@ -592,7 +580,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* ── Results ── */}
+          {/* Results */}
           {products.length > 0 ? (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} key="results">
 
@@ -655,7 +643,7 @@ export default function App() {
                       </div>
                       <div className="card-body">
                         <p className="card-title">{product.title}</p>
-                        
+                        <a
                           href={product.url}
                           target="_blank"
                           rel="noopener noreferrer"
@@ -668,6 +656,7 @@ export default function App() {
                   ))}
                 </div>
               )}
+
             </motion.div>
 
           ) : !loading && !error && (
@@ -681,6 +670,7 @@ export default function App() {
               <p>No products to display. Start a scrape to see results.</p>
             </motion.div>
           )}
+
         </AnimatePresence>
       </div>
     </>
