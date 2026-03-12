@@ -22,6 +22,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
   const [copied, setCopied] = useState(false);
 
+  // ── FIXED: now passes both url AND category, with proper error hints ──────
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -29,12 +30,21 @@ export default function App() {
     setProducts([]);
 
     try {
-  const response = await fetch(`/api/scrape?url=${encodeURIComponent(url)}&category=${encodeURIComponent(category)}`);
-  if (!response.ok) {
-    const data = await response.json();
-    throw new Error(data.error || "Failed to scrape data");
-  }
+      const params = new URLSearchParams({ url, category });
+      const response = await fetch(`/api/scrape?${params.toString()}`);
       const data = await response.json();
+
+      if (!response.ok) {
+        const hint = data.found?.length
+          ? `\nAvailable categories: ${data.found.join(", ")}`
+          : "";
+        throw new Error((data.error || "Failed to scrape") + hint);
+      }
+
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error(`No products found in category "${category}". Check the category name matches exactly.`);
+      }
+
       setProducts(data);
     } catch (err: any) {
       setError(err.message);
@@ -54,7 +64,7 @@ export default function App() {
     <div className="min-h-screen p-4 md:p-8 max-w-7xl mx-auto">
       <header className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <motion.h1 
+          <motion.h1
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             className="text-4xl font-bold tracking-tight mb-2"
@@ -63,16 +73,16 @@ export default function App() {
           </motion.h1>
           <p className="text-zinc-500">Production-grade category extraction with strict scoping</p>
         </div>
-        
+
         <div className="flex bg-zinc-100 p-1 rounded-xl">
-          <button 
+          <button
             onClick={() => setViewMode("table")}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${viewMode === "table" ? "bg-white shadow-sm text-emerald-600" : "text-zinc-500 hover:text-zinc-700"}`}
           >
             <List className="w-4 h-4" />
             Table
           </button>
-          <button 
+          <button
             onClick={() => setViewMode("grid")}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${viewMode === "grid" ? "bg-white shadow-sm text-emerald-600" : "text-zinc-500 hover:text-zinc-700"}`}
           >
@@ -82,7 +92,7 @@ export default function App() {
         </div>
       </header>
 
-      <motion.section 
+      <motion.section
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-200 mb-8"
@@ -141,12 +151,12 @@ export default function App() {
             className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl mb-8 flex items-center gap-3"
           >
             <AlertCircle className="w-5 h-5 shrink-0" />
-            <p>{error}</p>
+            <p className="whitespace-pre-line">{error}</p>
           </motion.div>
         )}
 
         {products.length > 0 ? (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="space-y-4"
@@ -155,7 +165,7 @@ export default function App() {
               <h2 className="text-lg font-semibold text-zinc-700">
                 Found {products.length} products in "{category}"
               </h2>
-              <button 
+              <button
                 onClick={copyToClipboard}
                 className="flex items-center gap-2 text-sm font-medium text-zinc-500 hover:text-emerald-600 transition-colors"
               >
@@ -170,6 +180,8 @@ export default function App() {
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-zinc-50 border-b border-zinc-200">
+                        <th className="p-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">#</th>
+                        <th className="p-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">Thumbnail</th>
                         <th className="p-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">Title</th>
                         <th className="p-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">URL</th>
                         <th className="p-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">Image URL</th>
@@ -177,13 +189,26 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-zinc-100">
                       {products.map((p, i) => (
-                        <tr key={i} className="hover:bg-zinc-50 transition-colors group">
+                        <tr key={i} className="hover:bg-zinc-50 transition-colors">
+                          <td className="p-4 text-sm text-zinc-400">{i + 1}</td>
+                          <td className="p-4">
+                            <img
+                              src={p.image}
+                              alt={p.title}
+                              referrerPolicy="no-referrer"
+                              className="w-10 h-10 rounded-lg object-cover bg-zinc-100"
+                            />
+                          </td>
                           <td className="p-4 text-sm font-medium text-zinc-900">{p.title}</td>
                           <td className="p-4 text-sm text-zinc-500 font-mono truncate max-w-xs">
-                            <a href={p.url} target="_blank" className="hover:text-emerald-600 underline decoration-zinc-200 underline-offset-4">{p.url}</a>
+                            <a href={p.url} target="_blank" rel="noopener noreferrer" className="hover:text-emerald-600 underline decoration-zinc-200 underline-offset-4">
+                              {p.url}
+                            </a>
                           </td>
                           <td className="p-4 text-sm text-zinc-500 font-mono truncate max-w-xs">
-                            <a href={p.image} target="_blank" className="hover:text-emerald-600 underline decoration-zinc-200 underline-offset-4">{p.image}</a>
+                            <a href={p.image} target="_blank" rel="noopener noreferrer" className="hover:text-emerald-600 underline decoration-zinc-200 underline-offset-4">
+                              {p.image}
+                            </a>
                           </td>
                         </tr>
                       ))}
@@ -213,7 +238,7 @@ export default function App() {
                       <h3 className="font-semibold text-sm mb-3 line-clamp-2 min-h-[2.5rem]">
                         {product.title}
                       </h3>
-                      <a
+                      
                         href={product.url}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -229,7 +254,7 @@ export default function App() {
             )}
           </motion.div>
         ) : !loading && !error && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="text-center py-20 text-zinc-400"
