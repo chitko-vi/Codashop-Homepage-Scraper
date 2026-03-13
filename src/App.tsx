@@ -4,8 +4,20 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { Search, Loader2, ExternalLink, Package, AlertCircle, LayoutGrid, List, Copy, Check } from "lucide-react";
+import {
+  Search,
+  Loader2,
+  ExternalLink,
+  Package,
+  AlertCircle,
+  LayoutGrid,
+  List,
+  Copy,
+  Check,
+} from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Product {
   title: string;
@@ -13,182 +25,249 @@ interface Product {
   image: string;
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Client-side result validation:
+ * - Strips items missing title / url / image.
+ * - Removes duplicates keyed on url.
+ */
+function validateAndDedupe(raw: unknown[]): Product[] {
+  const seen = new Set<string>();
+  const out: Product[] = [];
+
+  for (const item of raw) {
+    if (
+      item == null ||
+      typeof item !== "object" ||
+      !("title" in item) ||
+      !("url" in item) ||
+      !("image" in item)
+    ) {
+      continue;
+    }
+
+    const p = item as Product;
+    const title = (p.title ?? "").trim();
+    const url   = (p.url   ?? "").trim();
+    const image = (p.image ?? "").trim();
+
+    if (!title || !url || !image) continue;
+    if (seen.has(url)) continue;
+
+    seen.add(url);
+    out.push({ title, url, image });
+  }
+
+  return out;
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function App() {
-  const [url, setUrl] = useState("https://www.codashop.com/en-ph/");
+  const [url,      setUrl]      = useState("https://www.codashop.com/en-ph/");
   const [category, setCategory] = useState("VOUCHERS");
   const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
-  const [copied, setCopied] = useState(false);
+  const [copied,   setCopied]   = useState(false);
 
   useEffect(() => {
     document.title = "Codashop Scraper";
   }, []);
 
+  // ── Scrape handler ──────────────────────────────────────────────────────────
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     setProducts([]);
+
     try {
-      const params = new URLSearchParams({ url, category });
+      /**
+       * Extra hint flags forwarded to the server-side scraper:
+       *
+       * structuralMode=1  → use structural / class-based selectors
+       *                     ([data-category], [class*="product"], [class*="tile"])
+       *                     instead of matching button or heading text, so the
+       *                     scraper works regardless of page language.
+       *
+       * expandAll=1       → automatically expand any "View All" affordance by
+       *                     clicking it or parsing hidden nodes, without relying
+       *                     on the button's label text.
+       *
+       * strictSection=1   → scope tile collection to the matched category
+       *                     container only; discard tiles found in other sections.
+       */
+      const params = new URLSearchParams({
+        url,
+        category,
+        structuralMode: "1",
+        expandAll:      "1",
+        strictSection:  "1",
+      });
+
       const response = await fetch(`/api/scrape?${params.toString()}`);
-      const data = await response.json();
+      const data     = await response.json();
+
       if (!response.ok) {
-        const hint = data.found?.length ? `\nAvailable categories: ${data.found.join(", ")}` : "";
+        const hint = data.found?.length
+          ? `\nAvailable categories: ${data.found.join(", ")}`
+          : "";
         throw new Error((data.error || "Failed to scrape") + hint);
       }
-      if (!Array.isArray(data) || data.length === 0) {
-        throw new Error(`No products found in category "${category}". Check the category name matches exactly.`);
+
+      if (!Array.isArray(data)) {
+        throw new Error("Unexpected response format from scraper.");
       }
-      setProducts(data);
-    } catch (err: any) {
-      setError(err.message);
+
+      // Client-side validation + deduplication
+      const clean = validateAndDedupe(data);
+
+      if (clean.length === 0) {
+        throw new Error(
+          `No valid products found in category "${category}". ` +
+          `Check that the category name matches exactly.`
+        );
+      }
+
+      setProducts(clean);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
   };
 
+  // ── Copy TSV ────────────────────────────────────────────────────────────────
   const copyToClipboard = () => {
-    const text = products.map(p => `${p.title}\t${p.url}\t${p.image}`).join("\n");
-    navigator.clipboard.writeText(`Title\tURL\tImage URL\n${text}`);
+    const rows = products.map(p => `${p.title}\t${p.url}\t${p.image}`).join("\n");
+    navigator.clipboard.writeText(`Title\tURL\tImage URL\n${rows}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <>
+      {/* ── Fonts ── */}
       <link
-        href="https://fonts.googleapis.com/css2?family=Bangers&family=Nunito:wght@400;600;700;800&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@400;600;700;800&display=swap"
         rel="stylesheet"
       />
 
+      {/* ── Global styles ── */}
       <style>{`
+        /* ── Design tokens ───────────────────────────────────── */
         :root {
-          --bg-main:          #280031;
-          --headline:         #3c1f42;
-          --text-main:        #e7e5f5;
-          --text-highlight:   #e8f953;
-          --button-primary:   #6242fc;
-          --button-primary-hover: #7a5efd;
+          --bg-main:            #280031;
+          --bg-card:            #36004a;
+          --bg-card-hover:      #420059;
+          --bg-input:           #36004a;
+          --bg-topbar:          #1e0026;
+          --purple-mid:         #4a1060;
+          --border:             #5a2070;
+          --border-subtle:      rgba(90,32,112,0.45);
 
-          --bg-deep:          #280031;
-          --bg-card:          #3a1044;
-          --bg-card-hover:    #4a1858;
-          --bg-input:         #3a1044;
-          --purple-mid:       #4e1f5c;
-          --text-muted:       #b8a8d8;
-          --border:           #5a2870;
+          --headline:           #e7e5f5;
+          --text-main:          #e7e5f5;
+          --text-muted:         #b09ac8;
+          --text-highlight:     #e8f953;
+
+          --button-primary:     #6242fc;
+          --button-hover:       #7a5efd;
+          --button-disabled:    #3a2880;
+
+          --shadow-card:        0 4px 18px rgba(0,0,0,0.35);
+          --radius-card:        14px;
+          --radius-btn:         10px;
+          --radius-input:       10px;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        /* ── Reset ───────────────────────────────────────────── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
           background: var(--bg-main);
           color: var(--text-main);
           font-family: 'Nunito', sans-serif;
           min-height: 100vh;
+          -webkit-font-smoothing: antialiased;
         }
 
-        body::before {
-          content: '';
-          position: fixed;
-          inset: 0;
-          background-image:
-            linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
-          background-size: 40px 40px;
-          pointer-events: none;
-          z-index: 0;
-        }
-
+        /* ── Layout ──────────────────────────────────────────── */
         .page-wrap {
-          position: relative;
-          z-index: 1;
           max-width: 1200px;
           margin: 0 auto;
-          padding: 32px 24px 80px;
+          padding: 40px 28px 100px;
         }
 
-        .coda-heading {
-          font-family: 'Bangers', cursive;
-          font-size: 2.8rem;
-          letter-spacing: 0.04em;
-          color: var(--headline);
-          text-shadow:
-            3px 3px 0 #7c3aed,
-            -1px -1px 0 #7c3aed,
-            1px -1px 0 #7c3aed,
-            -1px 1px 0 #7c3aed;
-          line-height: 1;
-        }
-
-        .coda-sub {
-          color: var(--text-muted);
-          font-size: 0.9rem;
-          font-weight: 600;
-          margin-top: 6px;
-          letter-spacing: 0.02em;
-        }
-
+        /* ── Topbar ──────────────────────────────────────────── */
         .topbar {
-          background: linear-gradient(90deg, #1a0030, #3a0855, #1a0030);
+          background: var(--bg-topbar);
           border-bottom: 1px solid var(--border);
-          padding: 12px 24px;
+          padding: 14px 28px;
           display: flex;
           align-items: center;
-          gap: 12px;
           position: sticky;
           top: 0;
           z-index: 100;
         }
 
         .topbar-logo {
-          font-family: 'Bangers', cursive;
-          font-size: 1.5rem;
-          letter-spacing: 0.08em;
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 1.6rem;
+          letter-spacing: 2px;
           color: var(--text-main);
         }
 
         .topbar-logo span { color: var(--text-highlight); }
 
+        /* ── Page heading ────────────────────────────────────── */
+        .coda-heading {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 3rem;
+          letter-spacing: 1px;
+          color: var(--headline);
+          line-height: 1;
+        }
+
+        .coda-sub {
+          color: var(--text-muted);
+          font-size: 0.88rem;
+          font-weight: 600;
+          margin-top: 6px;
+          letter-spacing: 0.02em;
+        }
+
+        /* ── Form card ───────────────────────────────────────── */
         .form-card {
           background: var(--bg-card);
           border: 1px solid var(--border);
-          border-radius: 16px;
-          padding: 24px;
+          border-radius: var(--radius-card);
+          padding: 28px;
           margin: 32px 0 24px;
-          position: relative;
-          overflow: hidden;
-        }
-
-        .form-card::before {
-          content: '';
-          position: absolute;
-          top: 0; left: 0; right: 0;
-          height: 3px;
-          background: linear-gradient(90deg, var(--button-primary), var(--text-highlight), var(--button-primary));
         }
 
         .form-grid {
           display: grid;
           grid-template-columns: 1fr 1fr auto;
-          gap: 16px;
+          gap: 18px;
           align-items: end;
         }
 
         @media (max-width: 640px) {
           .form-grid { grid-template-columns: 1fr; }
-          .coda-heading { font-size: 2rem; }
+          .coda-heading { font-size: 2.2rem; }
         }
 
         .field-label {
           display: block;
-          font-size: 0.7rem;
+          font-size: 0.68rem;
           font-weight: 800;
           text-transform: uppercase;
-          letter-spacing: 0.1em;
+          letter-spacing: 0.12em;
           color: var(--text-muted);
           margin-bottom: 8px;
         }
@@ -197,23 +276,20 @@ export default function App() {
           width: 100%;
           background: var(--bg-input);
           border: 1px solid var(--border);
-          border-radius: 10px;
+          border-radius: var(--radius-input);
           padding: 12px 16px;
           color: var(--text-main);
           font-family: 'Nunito', sans-serif;
           font-size: 0.9rem;
           font-weight: 600;
           outline: none;
-          transition: border-color 0.2s, box-shadow 0.2s;
+          transition: border-color 0.18s;
         }
 
-        .field-input:focus {
-          border-color: var(--button-primary);
-          box-shadow: 0 0 0 3px rgba(98,66,252,0.25);
-        }
+        .field-input:focus { border-color: var(--button-primary); }
+        .field-input::placeholder { color: #6a4888; }
 
-        .field-input::placeholder { color: #7a5a9a; }
-
+        /* ── Primary button ──────────────────────────────────── */
         .btn-scrape {
           background: var(--button-primary);
           color: #fff;
@@ -221,34 +297,32 @@ export default function App() {
           font-weight: 800;
           font-size: 0.95rem;
           border: none;
-          border-radius: 10px;
+          border-radius: var(--radius-btn);
           padding: 12px 28px;
           cursor: pointer;
           display: flex;
           align-items: center;
           gap: 8px;
           white-space: nowrap;
-          transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
-          box-shadow: 0 4px 14px rgba(98,66,252,0.35);
+          transition: background 0.18s, transform 0.12s;
         }
 
         .btn-scrape:hover:not(:disabled) {
-          background: var(--button-primary-hover);
+          background: var(--button-hover);
           transform: translateY(-1px);
-          box-shadow: 0 6px 20px rgba(98,66,252,0.5);
         }
 
         .btn-scrape:disabled {
-          background: #3a2a80;
+          background: var(--button-disabled);
           cursor: not-allowed;
-          box-shadow: none;
         }
 
+        /* ── View toggle ─────────────────────────────────────── */
         .view-toggle {
           display: flex;
           background: var(--bg-card);
           border: 1px solid var(--border);
-          border-radius: 10px;
+          border-radius: var(--radius-btn);
           padding: 4px;
           gap: 4px;
         }
@@ -257,43 +331,35 @@ export default function App() {
           display: flex;
           align-items: center;
           gap: 6px;
-          padding: 8px 16px;
+          padding: 8px 18px;
           border-radius: 7px;
           font-family: 'Nunito', sans-serif;
           font-weight: 700;
-          font-size: 0.85rem;
+          font-size: 0.84rem;
           border: none;
           cursor: pointer;
-          transition: all 0.2s;
+          transition: background 0.18s, color 0.18s;
         }
 
-        .toggle-btn.active {
-          background: var(--button-primary);
-          color: #fff;
-        }
+        .toggle-btn.active   { background: var(--button-primary); color: #fff; }
+        .toggle-btn.inactive { background: transparent; color: var(--text-muted); }
+        .toggle-btn.inactive:hover { color: var(--text-main); }
 
-        .toggle-btn.inactive {
-          background: transparent;
-          color: var(--text-muted);
-        }
-
-        .toggle-btn.inactive:hover { color: var(--text-highlight); }
-
+        /* ── Results header ──────────────────────────────────── */
         .results-header {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-bottom: 16px;
+          margin-bottom: 18px;
           flex-wrap: wrap;
           gap: 12px;
         }
 
         .category-label {
-          font-family: 'Bangers', cursive;
-          font-size: 1.8rem;
-          letter-spacing: 0.05em;
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 1.9rem;
+          letter-spacing: 1px;
           color: var(--headline);
-          text-shadow: 2px 2px 0 #7c3aed;
           display: flex;
           align-items: center;
           gap: 10px;
@@ -301,15 +367,16 @@ export default function App() {
 
         .count-badge {
           font-family: 'Nunito', sans-serif;
-          font-size: 0.75rem;
+          font-size: 0.72rem;
           font-weight: 800;
           background: var(--purple-mid);
           color: var(--text-muted);
           padding: 3px 10px;
           border-radius: 20px;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.06em;
         }
 
+        /* ── Copy button ─────────────────────────────────────── */
         .btn-copy {
           display: flex;
           align-items: center;
@@ -323,17 +390,19 @@ export default function App() {
           padding: 8px 16px;
           border-radius: 8px;
           cursor: pointer;
-          transition: all 0.2s;
+          transition: color 0.18s, border-color 0.18s;
         }
 
         .btn-copy:hover { color: var(--text-highlight); border-color: var(--text-highlight); }
         .btn-copy.copied { color: var(--text-highlight); border-color: var(--text-highlight); }
 
+        /* ── Table ───────────────────────────────────────────── */
         .table-wrap {
           background: var(--bg-card);
           border: 1px solid var(--border);
-          border-radius: 14px;
+          border-radius: var(--radius-card);
           overflow: hidden;
+          box-shadow: var(--shadow-card);
         }
 
         .results-table {
@@ -347,25 +416,25 @@ export default function App() {
         }
 
         .results-table th {
-          padding: 14px 16px;
-          font-size: 0.68rem;
+          padding: 14px 18px;
+          font-size: 0.67rem;
           font-weight: 800;
           text-transform: uppercase;
-          letter-spacing: 0.1em;
+          letter-spacing: 0.12em;
           color: var(--text-muted);
           text-align: left;
         }
 
         .results-table tbody tr {
-          border-bottom: 1px solid rgba(90,40,112,0.5);
-          transition: background 0.15s;
+          border-bottom: 1px solid var(--border-subtle);
+          transition: background 0.14s;
         }
 
         .results-table tbody tr:last-child { border-bottom: none; }
-        .results-table tbody tr:hover { background: var(--bg-card-hover); }
+        .results-table tbody tr:hover      { background: var(--bg-card-hover); }
 
         .results-table td {
-          padding: 12px 16px;
+          padding: 12px 18px;
           font-size: 0.875rem;
           vertical-align: middle;
           color: var(--text-main);
@@ -376,7 +445,7 @@ export default function App() {
         .td-thumb img {
           width: 44px;
           height: 44px;
-          border-radius: 10px;
+          border-radius: 8px;
           object-fit: cover;
           background: var(--purple-mid);
           display: block;
@@ -394,11 +463,12 @@ export default function App() {
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
-          transition: color 0.15s;
+          transition: color 0.14s;
         }
 
         .td-link a:hover { color: var(--text-highlight); }
 
+        /* ── Product grid ────────────────────────────────────── */
         .product-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -408,15 +478,15 @@ export default function App() {
         .product-card {
           background: var(--bg-card);
           border: 1px solid var(--border);
-          border-radius: 14px;
+          border-radius: var(--radius-card);
           overflow: hidden;
-          transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+          box-shadow: var(--shadow-card);
+          transition: transform 0.18s, border-color 0.18s;
           cursor: pointer;
         }
 
         .product-card:hover {
           transform: translateY(-4px);
-          box-shadow: 0 12px 32px rgba(0,0,0,0.4);
           border-color: var(--button-primary);
         }
 
@@ -434,7 +504,7 @@ export default function App() {
           display: block;
         }
 
-        .product-card:hover .thumb img { transform: scale(1.08); }
+        .product-card:hover .thumb img { transform: scale(1.07); }
 
         .product-card .card-body { padding: 12px; }
 
@@ -458,14 +528,15 @@ export default function App() {
           font-weight: 700;
           color: var(--text-highlight);
           text-decoration: none;
-          transition: color 0.15s;
+          transition: opacity 0.14s;
         }
 
-        .product-card .card-link:hover { color: #f4ff80; }
+        .product-card .card-link:hover { opacity: 0.8; }
 
+        /* ── Error box ───────────────────────────────────────── */
         .error-box {
-          background: rgba(185,28,28,0.15);
-          border: 1px solid rgba(239,68,68,0.4);
+          background: rgba(185,28,28,0.12);
+          border: 1px solid rgba(239,68,68,0.35);
           color: #fca5a5;
           padding: 16px 20px;
           border-radius: 12px;
@@ -478,14 +549,15 @@ export default function App() {
           white-space: pre-line;
         }
 
+        /* ── Empty state ─────────────────────────────────────── */
         .empty-state {
           text-align: center;
-          padding: 80px 20px;
+          padding: 90px 20px;
           color: var(--text-muted);
         }
 
         .empty-state svg {
-          opacity: 0.15;
+          opacity: 0.12;
           margin: 0 auto 16px;
           display: block;
         }
@@ -496,27 +568,38 @@ export default function App() {
         }
       `}</style>
 
-      {/* Top bar */}
+      {/* ── Topbar ─────────────────────────────────────────────────────────── */}
       <div className="topbar">
         <span className="topbar-logo">CODA<span>SCRAPER</span></span>
       </div>
 
       <div className="page-wrap">
 
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
+        {/* ── Page heading ─────────────────────────────────────────────────── */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-end",
+            flexWrap: "wrap",
+            gap: 16,
+          }}
+        >
           <div>
             <motion.h1
               className="coda-heading"
-              initial={{ opacity: 0, y: -16 }}
+              initial={{ opacity: 0, y: -14 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
+              transition={{ duration: 0.35 }}
             >
               TILE SCRAPER
             </motion.h1>
-            <p className="coda-sub">Insert a Codashop page URL and category name to extract all product tiles</p>
+            <p className="coda-sub">
+              Insert a Codashop page URL and category name to extract all product tiles
+            </p>
           </div>
 
+          {/* ── View toggle ──────────────────────────────────────────────── */}
           <div className="view-toggle">
             <button
               className={`toggle-btn ${viewMode === "table" ? "active" : "inactive"}`}
@@ -533,10 +616,10 @@ export default function App() {
           </div>
         </div>
 
-        {/* Form */}
+        {/* ── Form ─────────────────────────────────────────────────────────── */}
         <motion.div
           className="form-card"
-          initial={{ opacity: 0, y: 16 }}
+          initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
         >
@@ -565,21 +648,23 @@ export default function App() {
             </div>
             <div>
               <button className="btn-scrape" type="submit" disabled={loading}>
-                {loading
-                  ? <><Loader2 size={18} className="animate-spin" /> Scraping...</>
-                  : <><Search size={18} /> Start Scrape</>
-                }
+                {loading ? (
+                  <><Loader2 size={18} className="animate-spin" /> Scraping…</>
+                ) : (
+                  <><Search size={18} /> Start Scrape</>
+                )}
               </button>
             </div>
           </form>
         </motion.div>
 
+        {/* ── Results / errors ─────────────────────────────────────────────── */}
         <AnimatePresence mode="wait">
 
-          {/* Error */}
           {error && (
             <motion.div
               className="error-box"
+              key="error"
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
@@ -589,23 +674,30 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* Results */}
           {products.length > 0 ? (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} key="results">
-
+            <motion.div
+              key="results"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              {/* Results header */}
               <div className="results-header">
                 <div className="category-label">
                   {category.toUpperCase()}
                   <span className="count-badge">{products.length} PRODUCTS</span>
                 </div>
+
                 <button
                   className={`btn-copy ${copied ? "copied" : ""}`}
                   onClick={copyToClipboard}
                 >
-                  {copied ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Copy TSV</>}
+                  {copied
+                    ? <><Check size={14} /> Copied!</>
+                    : <><Copy size={14} /> Copy TSV</>}
                 </button>
               </div>
 
+              {/* Table view */}
               {viewMode === "table" ? (
                 <div className="table-wrap">
                   <table className="results-table">
@@ -623,14 +715,22 @@ export default function App() {
                         <tr key={i}>
                           <td className="td-num">{i + 1}</td>
                           <td className="td-thumb">
-                            <img src={p.image} alt={p.title} referrerPolicy="no-referrer" />
+                            <img
+                              src={p.image}
+                              alt={p.title}
+                              referrerPolicy="no-referrer"
+                            />
                           </td>
                           <td className="td-title">{p.title}</td>
                           <td className="td-link">
-                            <a href={p.url} target="_blank" rel="noopener noreferrer">{p.url}</a>
+                            <a href={p.url} target="_blank" rel="noopener noreferrer">
+                              {p.url}
+                            </a>
                           </td>
                           <td className="td-link">
-                            <a href={p.image} target="_blank" rel="noopener noreferrer">{p.image}</a>
+                            <a href={p.image} target="_blank" rel="noopener noreferrer">
+                              {p.image}
+                            </a>
                           </td>
                         </tr>
                       ))}
@@ -638,17 +738,22 @@ export default function App() {
                   </table>
                 </div>
               ) : (
+                /* Grid view */
                 <div className="product-grid">
                   {products.map((product, idx) => (
                     <motion.div
                       key={idx}
                       className="product-card"
-                      initial={{ opacity: 0, y: 20 }}
+                      initial={{ opacity: 0, y: 18 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: idx * 0.025 }}
                     >
                       <div className="thumb">
-                        <img src={product.image} alt={product.title} referrerPolicy="no-referrer" />
+                        <img
+                          src={product.image}
+                          alt={product.title}
+                          referrerPolicy="no-referrer"
+                        />
                       </div>
                       <div className="card-body">
                         <p className="card-title">{product.title}</p>
@@ -665,15 +770,14 @@ export default function App() {
                   ))}
                 </div>
               )}
-
             </motion.div>
 
           ) : !loading && !error && (
             <motion.div
+              key="empty"
               className="empty-state"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              key="empty"
             >
               <Package size={56} />
               <p>No products to display. Start a scrape to see results.</p>
