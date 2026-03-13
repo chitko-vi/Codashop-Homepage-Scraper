@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Search, Loader2, ExternalLink, Package, AlertCircle, LayoutGrid, List, Copy, Check } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -21,6 +21,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    document.title = "Codashop Scraper";
+  }, []);
 
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,23 +66,27 @@ export default function App() {
 
       <style>{`
         :root {
-          --bg-deep:        #110826;
-          --bg-card:        #1e0f3a;
-          --bg-card-hover:  #2a1550;
-          --bg-input:       #2a1550;
-          --purple-mid:     #3d1f6e;
-          --accent-green:   #22c55e;
-          --accent-green-dark: #16a34a;
-          --text-primary:   #ffffff;
-          --text-muted:     #a78bca;
-          --border:         #3d2060;
+          --bg-main:          #280031;
+          --headline:         #3c1f42;
+          --text-main:        #e7e5f5;
+          --text-highlight:   #e8f953;
+          --button-primary:   #6242fc;
+          --button-primary-hover: #7a5efd;
+
+          --bg-deep:          #280031;
+          --bg-card:          #3a1044;
+          --bg-card-hover:    #4a1858;
+          --bg-input:         #3a1044;
+          --purple-mid:       #4e1f5c;
+          --text-muted:       #b8a8d8;
+          --border:           #5a2870;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
-          background: var(--bg-deep);
-          color: var(--text-primary);
+          background: var(--bg-main);
+          color: var(--text-main);
           font-family: 'Nunito', sans-serif;
           min-height: 100vh;
         }
@@ -107,7 +115,7 @@ export default function App() {
           font-family: 'Bangers', cursive;
           font-size: 2.8rem;
           letter-spacing: 0.04em;
-          color: #fff;
+          color: var(--headline);
           text-shadow:
             3px 3px 0 #7c3aed,
             -1px -1px 0 #7c3aed,
@@ -125,7 +133,7 @@ export default function App() {
         }
 
         .topbar {
-          background: linear-gradient(90deg, #1a0840, #2d1060, #1a0840);
+          background: linear-gradient(90deg, #1a0030, #3a0855, #1a0030);
           border-bottom: 1px solid var(--border);
           padding: 12px 24px;
           display: flex;
@@ -140,10 +148,10 @@ export default function App() {
           font-family: 'Bangers', cursive;
           font-size: 1.5rem;
           letter-spacing: 0.08em;
-          color: #fff;
+          color: var(--text-main);
         }
 
-        .topbar-logo span { color: var(--accent-green); }
+        .topbar-logo span { color: var(--text-highlight); }
 
         .form-card {
           background: var(--bg-card);
@@ -160,7 +168,7 @@ export default function App() {
           position: absolute;
           top: 0; left: 0; right: 0;
           height: 3px;
-          background: linear-gradient(90deg, #7c3aed, var(--accent-green), #7c3aed);
+          background: linear-gradient(90deg, var(--button-primary), var(--text-highlight), var(--button-primary));
         }
 
         .form-grid {
@@ -191,7 +199,7 @@ export default function App() {
           border: 1px solid var(--border);
           border-radius: 10px;
           padding: 12px 16px;
-          color: var(--text-primary);
+          color: var(--text-main);
           font-family: 'Nunito', sans-serif;
           font-size: 0.9rem;
           font-weight: 600;
@@ -200,14 +208,14 @@ export default function App() {
         }
 
         .field-input:focus {
-          border-color: #7c3aed;
-          box-shadow: 0 0 0 3px rgba(124,58,237,0.2);
+          border-color: var(--button-primary);
+          box-shadow: 0 0 0 3px rgba(98,66,252,0.25);
         }
 
-        .field-input::placeholder { color: #6b4fa0; }
+        .field-input::placeholder { color: #7a5a9a; }
 
         .btn-scrape {
-          background: var(--accent-green);
+          background: var(--button-primary);
           color: #fff;
           font-family: 'Nunito', sans-serif;
           font-weight: 800;
@@ -221,17 +229,17 @@ export default function App() {
           gap: 8px;
           white-space: nowrap;
           transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
-          box-shadow: 0 4px 14px rgba(34,197,94,0.3);
+          box-shadow: 0 4px 14px rgba(98,66,252,0.35);
         }
 
         .btn-scrape:hover:not(:disabled) {
-          background: var(--accent-green-dark);
+          background: var(--button-primary-hover);
           transform: translateY(-1px);
-          box-shadow: 0 6px 20px rgba(34,197,94,0.4);
+          box-shadow: 0 6px 20px rgba(98,66,252,0.5);
         }
 
         .btn-scrape:disabled {
-          background: #166534;
+          background: #3a2a80;
           cursor: not-allowed;
           box-shadow: none;
         }
@@ -260,7 +268,7 @@ export default function App() {
         }
 
         .toggle-btn.active {
-          background: var(--purple-mid);
+          background: var(--button-primary);
           color: #fff;
         }
 
@@ -269,7 +277,7 @@ export default function App() {
           color: var(--text-muted);
         }
 
-        .toggle-btn.inactive:hover { color: #fff; }
+        .toggle-btn.inactive:hover { color: var(--text-highlight); }
 
         .results-header {
           display: flex;
@@ -284,7 +292,7 @@ export default function App() {
           font-family: 'Bangers', cursive;
           font-size: 1.8rem;
           letter-spacing: 0.05em;
-          color: #fff;
+          color: var(--headline);
           text-shadow: 2px 2px 0 #7c3aed;
           display: flex;
           align-items: center;
@@ -318,8 +326,8 @@ export default function App() {
           transition: all 0.2s;
         }
 
-        .btn-copy:hover { color: var(--accent-green); border-color: var(--accent-green); }
-        .btn-copy.copied { color: var(--accent-green); border-color: var(--accent-green); }
+        .btn-copy:hover { color: var(--text-highlight); border-color: var(--text-highlight); }
+        .btn-copy.copied { color: var(--text-highlight); border-color: var(--text-highlight); }
 
         .table-wrap {
           background: var(--bg-card);
@@ -334,7 +342,7 @@ export default function App() {
         }
 
         .results-table thead tr {
-          background: #2a1550;
+          background: var(--purple-mid);
           border-bottom: 1px solid var(--border);
         }
 
@@ -349,7 +357,7 @@ export default function App() {
         }
 
         .results-table tbody tr {
-          border-bottom: 1px solid rgba(61,32,96,0.5);
+          border-bottom: 1px solid rgba(90,40,112,0.5);
           transition: background 0.15s;
         }
 
@@ -360,6 +368,7 @@ export default function App() {
           padding: 12px 16px;
           font-size: 0.875rem;
           vertical-align: middle;
+          color: var(--text-main);
         }
 
         .td-num { color: var(--text-muted); font-weight: 700; width: 40px; }
@@ -373,7 +382,7 @@ export default function App() {
           display: block;
         }
 
-        .td-title { font-weight: 700; color: #fff; }
+        .td-title { font-weight: 700; color: var(--text-main); }
 
         .td-link a {
           color: var(--text-muted);
@@ -388,7 +397,7 @@ export default function App() {
           transition: color 0.15s;
         }
 
-        .td-link a:hover { color: var(--accent-green); }
+        .td-link a:hover { color: var(--text-highlight); }
 
         .product-grid {
           display: grid;
@@ -408,7 +417,7 @@ export default function App() {
         .product-card:hover {
           transform: translateY(-4px);
           box-shadow: 0 12px 32px rgba(0,0,0,0.4);
-          border-color: var(--purple-mid);
+          border-color: var(--button-primary);
         }
 
         .product-card .thumb {
@@ -432,7 +441,7 @@ export default function App() {
         .product-card .card-title {
           font-weight: 700;
           font-size: 0.82rem;
-          color: #fff;
+          color: var(--text-main);
           margin-bottom: 8px;
           display: -webkit-box;
           -webkit-line-clamp: 2;
@@ -447,12 +456,12 @@ export default function App() {
           gap: 4px;
           font-size: 0.75rem;
           font-weight: 700;
-          color: var(--accent-green);
+          color: var(--text-highlight);
           text-decoration: none;
           transition: color 0.15s;
         }
 
-        .product-card .card-link:hover { color: #4ade80; }
+        .product-card .card-link:hover { color: #f4ff80; }
 
         .error-box {
           background: rgba(185,28,28,0.15);
