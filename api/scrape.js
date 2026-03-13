@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   try {
     const response = await fetch(url, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
@@ -23,135 +23,132 @@ export default async function handler(req, res) {
 
     const html = await response.text();
 
-    // ── Step 1: Find the category label ────────────────────────────────────
-    const escaped = category.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const startIdx = html.search(new RegExp(">\\s*" + escaped + "\\s*<", "i"));
+    // ── Step 1: Find our category heading ────────────────────────────────────
+    const escaped = category.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const headingRegex = new RegExp(">\\s*" + escaped + "\\s*<", "i");
+    const headingMatch = html.match(headingRegex);
 
-    if (startIdx === -1) {
-      // Return available categories to help debug
-      const categoryMatches = [];
-      const catRegex = /class="[^"]*(?:section-title|category-title|header-title)[^"]*"[^>]*>([\s\S]*?)<\//g;
-      let catMatch;
-      while ((catMatch = catRegex.exec(html)) !== null) {
-        const text = catMatch[1].replace(/<[^>]+>/g, "").trim();
-        if (text) categoryMatches.push(text);
-      }
+    if (!headingMatch) {
       return res.status(404).json({
-        error: `Category "${category}" not found`,
-        hint: "Try one of these detected headers",
-        found: categoryMatches.slice(0, 20),
+        error: `Category "${category}" not found on this page.`,
+        found: findAllHeadings(html),
       });
     }
 
-    const afterLabel = html.substring(startIdx + category.length);
+    const headingPos = html.indexOf(headingMatch[0]);
 
-    // ── Step 2: Cut section at next real category header ───────────────────
-    // Skip UI buttons (View All / View Less etc.) — identified by <button> tag in gap
-    // Real headers appear as plain text between </a> and <a> with no <button> wrapper
-    const UI_TEXTS = [
-      "view all", "view less", "see all", "see less", "see more",
-      "show all", "show less", "load more", "查看全部", "收起",
-      "ver todo", "すべて見る", "전체보기", "lihat semua", "xem tất cả",
-    ];
+    // ── Step 2: Find where this section ENDS ─────────────────────────────────
+    //
+    // THE BUG that was here before:
+    // The old code scanned gap-by-gap between </a> and <a> tags.
+    // When a gap contained a <button> (the "View All" button), it skipped the
+    // gap entirely — even if that same gap ALSO contained the next section
+    // heading. So the section boundary was silently skipped and products from
+    // the next category bled in.
+    //
+    // THE FIX:
+    // Instead of scanning gaps, we blank out ALL <a>…</a> content by replacing
+    // it with null bytes (same length so positions are preserved). Then we search
+    // forward for the next heading-like text that is NOT inside an anchor tag.
+    // Buttons, divs, and hidden elements are all visible in this search, so the
+    // real section boundary is never missed.
 
-    let cutAt = afterLabel.length;
-    let productsSeen = 0;
-    let searchPos = 0;
+    // Replace every <a>…</a> with null bytes of the same length.
+    // This preserves string positions while hiding anchor text from our search.
+    const blanked = html.replace(/<a[\s\S]*?<\/a>/gi, (m) => "\x00".repeat(m.length));
 
-    while (searchPos < afterLabel.length) {
-      const closeTag = afterLabel.indexOf("</a>", searchPos);
-      if (closeTag === -1) break;
-      const afterClose = closeTag + 4;
-      const nextOpen = afterLabel.indexOf("<a ", afterClose);
-      if (nextOpen === -1) break;
+    // Search from just after our heading
+    const searchFrom = headingPos + headingMatch[0].length;
+    const searchArea = blanked.substring(searchFrom);
 
-      const preceding = afterLabel.substring(Math.max(0, closeTag - 600), closeTag);
-      if (/href="\/[^"]{5,}"/.test(preceding)) productsSeen++;
+    // Match >TEXT< where TEXT contains no null bytes — meaning it is NOT
+    // inside an anchor tag and therefore could be a real section heading.
+    const nextHeadingRegex = />([^\x00<>]{2,80})</g;
+    let sectionEnd = html.length; // default: use everything until end of page
+    let m;
 
-      if (productsSeen >= 1) {
-        const gap = afterLabel.substring(afterClose, nextOpen);
-        const gapLower = gap.toLowerCase();
+    while ((m = nextHeadingRegex.exec(searchArea)) !== null) {
+      const text = m[1].trim();
+      if (!text || text.length < 2) continue;
 
-        // Skip if gap contains a <button> (it's a UI expand control)
-        if (gapLower.includes("<button")) {
-          searchPos = nextOpen + 1;
-          continue;
-        }
+      // Skip our own heading if somehow matched again
+      if (text.toUpperCase() === category.trim().toUpperCase()) continue;
 
-        const gapText = gap.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      // Must contain at least one letter
+      if (!/[A-Za-z]/.test(text)) continue;
 
-        // Skip known UI button texts
-        const isUIText = UI_TEXTS.some((t) => gapText.toLowerCase().includes(t));
-        if (isUIText) {
-          searchPos = nextOpen + 1;
-          continue;
-        }
+      // Skip if it contains characters that indicate a URL, CSS, or code
+      if (/[/{}\\<>@#=|]/.test(text)) continue;
 
-        // If short text with letters → real category header → stop
-        const looksLikeHeader =
-          gapText.length >= 2 &&
-          gapText.length <= 120 &&
-          /\p{L}/u.test(gapText) &&
-          !gapText.includes("http") &&
-          !gapText.includes("/") &&
-          !gapText.includes("{");
+      // Skip if it starts with a digit (likely a number, not a heading)
+      if (/^\s*\d/.test(text)) continue;
 
-        if (looksLikeHeader) {
-          cutAt = afterClose;
-          break;
-        }
-      }
+      // Skip common UI strings in any language by checking for substrings
+      // that appear in known "expand" affordances
+      const lower = text.toLowerCase();
+      if (
+        lower.includes("view all") ||
+        lower.includes("see all") ||
+        lower.includes("load more") ||
+        lower.includes("show all") ||
+        lower.includes("lihat semua") ||
+        lower.includes("ver todo") ||
+        lower.includes("ver tudo") ||
+        lower.includes("xem t") || // xem tất cả
+        lower.includes("すべて") ||
+        lower.includes("전체보기")
+      ) continue;
 
-      searchPos = nextOpen + 1;
+      // This looks like a real section heading — cut here
+      sectionEnd = searchFrom + m.index;
+      break;
     }
 
-    const section = afterLabel.substring(0, cutAt);
+    // Extract only the HTML for our section
+    const sectionHtml = html.substring(headingPos, sectionEnd);
 
-    // ── Step 3: Extract products from section ──────────────────────────────
-    const chunks = section.split(/<\/a>/);
+    // ── Step 3: Extract products from the scoped section ─────────────────────
+    // Split on </a> and process each chunk.
+    // Because sectionHtml is already cut at the next section boundary,
+    // only products from our category can appear here.
+    const chunks = sectionHtml.split(/<\/a>/i);
     const results = [];
     const seen = new Set();
 
     for (const chunk of chunks) {
-      const hrefMatch = chunk.match(/href="(\/[^"#?]+)"/);
+      // Must have a product-style href: relative path with at least 2 segments
+      // e.g. /en-ph/roblox-gift-cards — NOT / or /en-ph/
+      const hrefMatch = chunk.match(/href="(\/[^"#?]{5,})"/);
       if (!hrefMatch) continue;
       const path = hrefMatch[1];
-      if (path === "/" || path.split("/").length < 3) continue;
+      if (path.split("/").length < 3) continue;
 
-      // Title: alt → <p> text → stripped text
-      let title = "";
-      const altMatch = chunk.match(/alt="([^"<>]+)"/);
-      if (altMatch) title = altMatch[1].trim();
-
-      if (!title) {
-        const pMatch = chunk.match(/<p[^>]*>([\s\S]*?)<\/p>/);
-        if (pMatch) title = pMatch[1].replace(/<[^>]+>/g, "").trim();
-      }
-
-      if (!title) {
-        const stripped = chunk.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-        const parts = stripped.split("  ").filter((s) => s.trim().length > 1);
-        if (parts.length) title = parts[parts.length - 1].trim();
-      }
-
-      if (!title || title.includes("<")) continue;
-
-      // Image: src → srcset first item → data-src
+      // Must have an image (tiles always do; nav links don't)
       let image = "";
       const srcMatch = chunk.match(/\bsrc="(https?:\/\/[^"]+)"/);
       if (srcMatch) {
         image = srcMatch[1];
       } else {
-        const srcsetMatch = chunk.match(/srcset="([^"]+)"/);
-        if (srcsetMatch) image = srcsetMatch[1].split(",")[0].trim().split(" ")[0];
+        const dataSrc = chunk.match(/data-src="([^"]+)"/);
+        if (dataSrc) {
+          image = dataSrc[1];
+        } else {
+          const srcset = chunk.match(/srcset="([^"]+)"/);
+          if (srcset) image = srcset[1].split(",")[0].trim().split(" ")[0];
+        }
       }
-      if (!image) {
-        const dataSrcMatch = chunk.match(/data-src="([^"]+)"/);
-        if (dataSrcMatch) image = dataSrcMatch[1];
+      if (!image) continue;
+      if (!image.startsWith("http")) image = "https://cdn1.codashop.com" + image;
+
+      // Get title: alt text first (most reliable), then <p> text
+      let title = "";
+      const altMatch = chunk.match(/alt="([^"<>]+)"/);
+      if (altMatch) title = altMatch[1].trim();
+      if (!title) {
+        const pMatch = chunk.match(/<p[^>]*>([\s\S]*?)<\/p>/);
+        if (pMatch) title = pMatch[1].replace(/<[^>]+>/g, "").trim();
       }
-      if (image && !image.startsWith("http")) {
-        image = "https://cdn1.codashop.com" + image;
-      }
+      if (!title || title.includes("<")) continue;
 
       const fullUrl = "https://www.codashop.com" + path;
       if (!seen.has(fullUrl)) {
@@ -160,9 +157,34 @@ export default async function handler(req, res) {
       }
     }
 
+    if (results.length === 0) {
+      return res.status(404).json({
+        error: `"${category}" section was found but contained no product tiles.`,
+        found: findAllHeadings(html),
+      });
+    }
+
     return res.status(200).json(results);
 
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
+}
+
+// ── Helper: collect visible section headings for error hints ─────────────────
+function findAllHeadings(html) {
+  const blanked = html.replace(/<a[\s\S]*?<\/a>/gi, (m) => "\x00".repeat(m.length));
+  const headings = [];
+  const regex = />([^\x00<>]{3,60})</g;
+  let m;
+  while ((m = regex.exec(blanked)) !== null) {
+    const text = m[1].trim();
+    if (!text || text.length < 3) continue;
+    if (!/[A-Za-z]/.test(text)) continue;
+    if (/[/{}\\<>@#=]/.test(text)) continue;
+    if (/^\d/.test(text)) continue;
+    if (!headings.includes(text)) headings.push(text);
+    if (headings.length >= 20) break;
+  }
+  return headings;
 }
