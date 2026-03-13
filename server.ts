@@ -31,8 +31,9 @@ async function startServer() {
       });
 
       console.log(`Navigating to ${url}...`);
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.goto(url as string, { waitUntil: "domcontentloaded", timeout: 60000 });
 
+      // Remove overlays/popups that might block interaction
       await page.evaluate(() => {
         ["#intentPreview", "wiz-iframe-intent", ".modal-backdrop", ".popup-overlay"].forEach((sel) => {
           document.querySelectorAll(sel).forEach((el) => el.remove());
@@ -45,8 +46,6 @@ async function startServer() {
         .catch(() => console.log("No product tile selector matched, continuing..."));
 
       // ── Step 1: Find and mark the category header ─────────────────────────
-      // Pass category as an argument to avoid closure capture issues with bundlers
-      // Use ONLY arrow functions inside evaluate to prevent __name injection
       const headerFound = await page.evaluate((categoryName) => {
         const allEls = Array.from(document.querySelectorAll("*"));
         for (const el of allEls) {
@@ -56,7 +55,6 @@ async function startServer() {
           );
           if (elementChildren.length > 2) continue;
 
-          // Normalise inline — no named function declaration
           const normalised = (el.textContent || "")
             .replace(/[\u200B-\u200D\uFEFF]/g, "")
             .replace(/\s+/g, " ")
@@ -72,17 +70,30 @@ async function startServer() {
           }
         }
         return false;
-      }, category as string);  // pass as arg, not closure
+      }, category as string);
 
       if (!headerFound) {
-        return res.status(404).json({ error: `Category "${category}" not found on page` });
+        // Return what headings ARE on the page to help debug
+        const found = await page.evaluate(() => {
+          const headings: string[] = [];
+          document.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((h) => {
+            const t = (h.textContent || "").trim();
+            if (t && t.length < 80) headings.push(t);
+          });
+          return headings;
+        });
+        return res.status(404).json({
+          error: `Category "${category}" not found on page`,
+          found,
+        });
       }
 
       const categoryHeader = page.locator('[data-coda-target="category-header"]').first();
       await categoryHeader.scrollIntoViewIfNeeded();
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(800);
 
-      // ── Step 2: Click expand button (language-agnostic, arrow fns only) ───
+      // ── Step 2: Click expand button (language-agnostic) ───────────────────
+      // Looks for a button near the header — by class name, not label text.
       const clicked = await page.evaluate(() => {
         const header = document.querySelector('[data-coda-target="category-header"]');
         if (!header) return false;
@@ -95,7 +106,12 @@ async function startServer() {
             const hasText = (btn.textContent || "").trim().length > 0;
             const hasNoImg = !btn.querySelector("img");
             const cls = (btn.className || "").toLowerCase();
-            const isExpand = cls.includes("expand") || cls.includes("view") || cls.includes("more");
+            const isExpand =
+              cls.includes("expand") ||
+              cls.includes("view") ||
+              cls.includes("more") ||
+              cls.includes("all") ||
+              cls.includes("see");
             return hasText && hasNoImg && isExpand;
           });
 
@@ -104,7 +120,6 @@ async function startServer() {
             return true;
           }
 
-          // Fallback: only non-product button in container
           const candidates = buttons.filter((btn) => {
             const txt = (btn.textContent || "").trim();
             return txt.length > 0 && txt.length < 50 && !btn.querySelector("img");
@@ -120,54 +135,125 @@ async function startServer() {
       });
 
       if (clicked) {
-        console.log("Expand button clicked");
+        console.log("Expand button clicked, waiting for content...");
         await page.waitForTimeout(2000);
       }
 
+      // Scroll to load lazy images
       await page.evaluate(() => window.scrollBy(0, 600));
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(400);
       await page.evaluate(() => window.scrollBy(0, 600));
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(400);
 
-      // ── Step 3: Extract products (arrow fns only) ─────────────────────────
+      // ── Step 3: Extract products scoped ONLY to this section ──────────────
+      //
+      // THE FIX — why the old code leaked into other categories:
+      // The old approach walked UP from the header to find a container with >1
+      // link. That container was often a page-level wrapper holding ALL sections.
+      // So all products from every section below were collected.
+      //
+      // THE NEW APPROACH uses compareDocumentPosition:
+      // 1. Find the next section heading AFTER our marked header.
+      // 2. Collect only anchors that are:
+      //    - AFTER our header in DOM order
+      //    - BEFORE the next section heading in DOM order
+      // This gives us exactly the products in our section and nothing else.
+      // It works regardless of nesting depth, button placement, or page language.
+
       const products = await page.evaluate(() => {
         const header = document.querySelector('[data-coda-target="category-header"]');
         if (!header) return { error: "Header marker not found" };
 
-        let container = header.parentElement;
-        for (let i = 0; i < 8; i++) {
-          if (!container) break;
-          if (container.querySelectorAll('a[href*="/"]').length > 1) break;
-          container = container.parentElement;
-        }
-        if (!container) return { error: "Section container not found" };
+        const ourText = (header.textContent || "").trim().toUpperCase();
 
-        const anchors = Array.from(container.querySelectorAll("a"));
+        // Find the next heading-like element that comes AFTER our header
+        // and has different text — this marks the start of the next section.
+        const headingCandidates = Array.from(document.querySelectorAll(
+          "h1, h2, h3, h4, h5, h6, " +
+          "[class*='section-title'], [class*='category-title'], " +
+          "[class*='section-header'], [class*='category-header'], " +
+          "[class*='section-name'], [class*='cat-title']"
+        ));
+
+        let nextSectionHeader: Element | null = null;
+        for (const h of headingCandidates) {
+          // Skip if this IS our header or contains it
+          if (h === header || h.contains(header) || header.contains(h)) continue;
+
+          // Check it comes AFTER our header in document order
+          const position = header.compareDocumentPosition(h);
+          const isAfter = !!(position & Node.DOCUMENT_POSITION_FOLLOWING);
+          if (!isAfter) continue;
+
+          // Must have different text (skip decorative duplicates)
+          const text = (h.textContent || "").trim().toUpperCase();
+          if (!text || text === ourText) continue;
+
+          nextSectionHeader = h;
+          break; // first one found = closest next section
+        }
+
+        console.log(
+          "Next section heading:",
+          nextSectionHeader
+            ? (nextSectionHeader.textContent || "").trim()
+            : "none (using all remaining anchors)"
+        );
+
+        // Collect all anchors between our header and the next section header
+        const allAnchors = Array.from(document.querySelectorAll("a[href]")) as HTMLAnchorElement[];
         const results: { title: string; url: string; image: string }[] = [];
         const seen = new Set<string>();
 
-        for (const anchor of anchors) {
-          const href = (anchor as HTMLAnchorElement).href;
-          if (
-            !href ||
-            !href.includes("codashop.com") ||
-            href.includes("terms") ||
-            href.includes("privacy") ||
-            href.split("/").length < 5
-          ) continue;
+        for (const anchor of allAnchors) {
+          const href = anchor.href;
+          if (!href || !href.includes("codashop.com")) continue;
+          if (href.includes("terms") || href.includes("privacy") || href.includes("faq")) continue;
+          if (href.split("/").length < 5) continue;
 
-          const imgEl = anchor.querySelector("img") as HTMLImageElement | null;
-          const altText = (imgEl ? imgEl.alt : "").trim();
-          const textEl = anchor.querySelector("p, h3, [class*='name'], [class*='title'], span");
-          const title = altText || (textEl ? textEl.textContent.trim() : "");
+          // Must come AFTER our header
+          const afterHeader = !!(
+            header.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_FOLLOWING
+          );
+          if (!afterHeader) continue;
 
-          let image = "";
-          if (imgEl) {
-            const srcset = imgEl.getAttribute("srcset") || imgEl.getAttribute("data-srcset") || "";
-            image = imgEl.src || imgEl.dataset.src || srcset.split(",")[0].trim().split(" ")[0] || "";
+          // Must come BEFORE the next section header (if one exists)
+          if (nextSectionHeader) {
+            const beforeNext = !!(
+              nextSectionHeader.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_PRECEDING
+            );
+            if (!beforeNext) continue;
           }
 
-          if (title && href && !seen.has(href)) {
+          // Must have an image — product tiles always do, nav links don't
+          const imgEl = anchor.querySelector("img") as HTMLImageElement | null;
+          if (!imgEl) continue;
+
+          // Title: alt text → visible text element → aria-label
+          const altText = (imgEl.alt || "").trim();
+          const textEl = anchor.querySelector(
+            "p, h3, [class*='name'], [class*='title'], span"
+          );
+          const innerText = textEl ? (textEl.textContent || "").trim() : "";
+          const ariaLabel = (anchor.getAttribute("aria-label") || "").trim();
+          const title = altText || innerText || ariaLabel;
+          if (!title) continue;
+
+          // Image: src → data-src → srcset first item
+          let image =
+            imgEl.src ||
+            imgEl.getAttribute("data-src") ||
+            imgEl.getAttribute("data-lazy-src") ||
+            "";
+          if (!image) {
+            const srcset =
+              imgEl.getAttribute("srcset") ||
+              imgEl.getAttribute("data-srcset") ||
+              "";
+            if (srcset) image = srcset.split(",")[0].trim().split(" ")[0];
+          }
+
+          if (!seen.has(href)) {
             seen.add(href);
             results.push({ title, url: href, image });
           }
@@ -176,7 +262,7 @@ async function startServer() {
         return results;
       });
 
-      // Clean up marker
+      // Clean up the marker attribute
       await page.evaluate(() => {
         document.querySelectorAll('[data-coda-target="category-header"]').forEach((el) => {
           el.removeAttribute("data-coda-target");
@@ -184,7 +270,9 @@ async function startServer() {
       });
 
       if (!Array.isArray(products)) {
-        return res.status(500).json({ error: (products as any).error || "Unknown extraction error" });
+        return res.status(500).json({
+          error: (products as { error: string }).error || "Unknown extraction error",
+        });
       }
 
       console.log(`Found ${products.length} products in "${category}"`);
