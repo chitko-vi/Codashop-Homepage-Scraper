@@ -10,244 +10,11 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
-
 interface Product {
   title: string;
   url:   string;
   image: string;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Scraping logic (runs fully in the browser — no backend needed)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Fetch the raw HTML of `pageUrl` through a CORS proxy.
- * Tries two public proxies in sequence so one failure doesn't block everything.
- */
-async function fetchHTML(pageUrl: string): Promise<string> {
-  const proxies = [
-    `https://api.allorigins.win/get?url=${encodeURIComponent(pageUrl)}`,
-    `https://corsproxy.io/?${encodeURIComponent(pageUrl)}`,
-  ];
-
-  for (const proxy of proxies) {
-    try {
-      const res = await fetch(proxy, { signal: AbortSignal.timeout(20_000) });
-      if (!res.ok) continue;
-
-      // allorigins wraps content in JSON; corsproxy returns raw HTML
-      const text = await res.text();
-      try {
-        const json = JSON.parse(text);
-        if (json?.contents) return json.contents as string;
-      } catch {
-        // not JSON → it's raw HTML (corsproxy)
-      }
-      if (text.trim().startsWith("<")) return text;
-    } catch {
-      // try next proxy
-    }
-  }
-
-  throw new Error(
-    "Could not fetch the page. Both CORS proxies failed. " +
-    "Check the URL and try again.",
-  );
-}
-
-/**
- * Parse `html` and extract every product tile that belongs **only** to the
- * section whose heading matches `category` (case-insensitive).
- *
- * Algorithm
- * ─────────
- * 1. Parse HTML with DOMParser.
- * 2. Scan every element whose text equals the category — find its container.
- * 3. Collect ALL <a> tags with an <img> child INSIDE that container only.
- *    This includes items that are visually hidden behind a "View All" button
- *    because Codashop stores them in the DOM but hides them with CSS.
- * 4. Validate (title + url + image required) and deduplicate on URL.
- */
-function scrapeCategory(html: string, pageUrl: string, category: string): Product[] {
-  const categoryUpper = category.trim().toUpperCase();
-
-  // Parse into a detached document (safe — scripts won't execute)
-  const parser = new DOMParser();
-  const doc    = parser.parseFromString(html, "text/html");
-
-  // Set <base> so relative URLs resolve correctly
-  const baseEl = doc.createElement("base");
-  baseEl.href  = pageUrl;
-  doc.head.insertBefore(baseEl, doc.head.firstChild);
-
-  // ── Step 1: Find the heading element that matches the category ────────────
-  const allElements = Array.from(doc.querySelectorAll("*"));
-  let headingEl: Element | null = null;
-
-  for (const el of allElements) {
-    // Only consider leaf-ish text nodes — skip giant containers
-    if (el.children.length > 6) continue;
-    const text = (el.textContent ?? "").trim().toUpperCase();
-    if (text === categoryUpper) {
-      headingEl = el;
-      break;
-    }
-  }
-
-  if (!headingEl) {
-    // Collect visible section-like headings to help the user
-    const hints: string[] = [];
-    for (const el of allElements) {
-      if (el.children.length > 4) continue;
-      const t = (el.textContent ?? "").trim();
-      if (t.length >= 2 && t.length <= 60 && !hints.includes(t.toUpperCase())) {
-        const parent = el.closest("section, article, div");
-        if (parent && parent.querySelectorAll("a img").length > 0) {
-          hints.push(t);
-        }
-      }
-    }
-    const hintStr = hints.length
-      ? `\nAvailable sections found: ${hints.slice(0, 12).join(", ")}`
-      : "";
-    throw new Error(`Category "${category}" was not found on this page.${hintStr}`);
-  }
-
-  // ── Step 2: Walk UP to find the section container ─────────────────────────
-  // We want the nearest ancestor that actually contains product anchors.
-  let container: Element | null = headingEl.parentElement;
-
-  while (container && container.tagName.toLowerCase() !== "body") {
-    const tag = container.tagName.toLowerCase();
-
-    // A <section> or <article> is always a good boundary
-    if (tag === "section" || tag === "article") break;
-
-    // A <div> is acceptable if it contains at least 2 anchors with images
-    if (tag === "div" && container.querySelectorAll("a img").length >= 2) break;
-
-    container = container.parentElement;
-  }
-
-  if (!container || container.tagName.toLowerCase() === "body") {
-    throw new Error(
-      `Found the "${category}" heading but could not determine its section boundary.`,
-    );
-  }
-
-  // ── Step 3: Determine where this section ENDS ─────────────────────────────
-  // Some pages don't wrap each category in a clean <section>; they just stack
-  // <div>s.  To avoid leaking into the next category we check: if the
-  // container holds another category-level heading, trim to only the nodes
-  // before it.
-  //
-  // We do this by working with the container itself — we'll only collect
-  // anchors that appear BEFORE any sibling heading that belongs to a
-  // DIFFERENT category section.
-
-  // Collect direct-child sub-containers in DOM order
-  const children = Array.from(container.children);
-
-  // Find the index of a child that contains a DIFFERENT category heading
-  // (i.e., another section has started)
-  let cutoffIndex = children.length;
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i];
-    // Skip the child that contains our own heading
-    if (child.contains(headingEl)) continue;
-
-    // Does this child look like a new section heading?
-    for (const el of Array.from(child.querySelectorAll("*"))) {
-      if (el.children.length > 6) continue;
-      const t = (el.textContent ?? "").trim().toUpperCase();
-      // Non-empty, different from ours, has its own product links
-      if (
-        t.length >= 2 &&
-        t !== categoryUpper &&
-        child.querySelectorAll("a img").length >= 2
-      ) {
-        cutoffIndex = i;
-        break;
-      }
-    }
-    if (cutoffIndex < children.length) break;
-  }
-
-  // Build a temporary root containing only the nodes we care about
-  const scopeRoot = doc.createElement("div");
-  for (let i = 0; i < cutoffIndex; i++) {
-    scopeRoot.appendChild(children[i].cloneNode(true));
-  }
-  // Also include the heading's direct parent chain up to container
-  // (in case the heading is in a sibling before the tiles)
-  if (cutoffIndex === children.length) {
-    // No cutoff found — use the full container as-is
-    scopeRoot.innerHTML = container.innerHTML;
-  }
-
-  // ── Step 4: Extract all anchors with images from scoped root ─────────────
-  const anchors = Array.from(scopeRoot.querySelectorAll("a")) as HTMLAnchorElement[];
-
-  const seen    = new Set<string>();
-  const results: Product[] = [];
-
-  for (const a of anchors) {
-    const img = a.querySelector("img");
-    if (!img) continue;
-
-    // ── URL ──────────────────────────────────────────────────────────────────
-    let href = (a.getAttribute("href") ?? "").trim();
-    if (!href || href === "#" || href.startsWith("javascript")) continue;
-
-    try { href = new URL(href, pageUrl).href; } catch { continue; }
-    if (seen.has(href)) continue;
-
-    // ── Image ────────────────────────────────────────────────────────────────
-    const rawImg =
-      img.getAttribute("data-src")      ??
-      img.getAttribute("data-lazy-src") ??
-      img.getAttribute("srcset")?.split(",")[0]?.split(" ")[0]?.trim() ??
-      img.getAttribute("src") ??
-      "";
-
-    let imgSrc = rawImg.trim();
-    if (!imgSrc || imgSrc.startsWith("data:")) continue;
-
-    try { imgSrc = new URL(imgSrc, pageUrl).href; } catch { continue; }
-
-    // ── Title ────────────────────────────────────────────────────────────────
-    const titleEl  = a.querySelector(
-      "[class*='title'],[class*='name'],[class*='label'],figcaption,p,span",
-    );
-    const innerTxt = (titleEl?.textContent ?? "").trim();
-    const altTxt   = (img.getAttribute("alt") ?? "").trim();
-    const ariaLbl  = (a.getAttribute("aria-label") ?? "").trim();
-    const titleAtt = (a.getAttribute("title") ?? "").trim();
-
-    const title = innerTxt || altTxt || ariaLbl || titleAtt;
-    if (!title) continue;
-
-    seen.add(href);
-    results.push({ title, url: href, image: imgSrc });
-  }
-
-  if (results.length === 0) {
-    throw new Error(
-      `The "${category}" section was found but contained no product tiles. ` +
-      `The page structure may have changed.`,
-    );
-  }
-
-  return results;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────────────────────
 
 export default function App() {
   const [url,      setUrl]      = useState("https://www.codashop.com/en-ph/");
@@ -267,9 +34,24 @@ export default function App() {
     setProducts([]);
 
     try {
-      const html  = await fetchHTML(url);
-      const items = scrapeCategory(html, url, category);
-      setProducts(items);
+      // Call your own server — no CORS proxies needed.
+      // server.ts handles /api/scrape and launches Playwright to do the scraping.
+      const params = new URLSearchParams({ url, category });
+      const res = await fetch(`/api/scrape?${params}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        const hint = data.found?.length
+          ? `\nCategories found on page: ${data.found.join(", ")}`
+          : "";
+        throw new Error((data.error || "Scrape failed") + hint);
+      }
+
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error(`No products found in "${category}". Check the category name matches exactly.`);
+      }
+
+      setProducts(data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -635,14 +417,12 @@ export default function App() {
         .empty-state p   { font-weight: 600; font-size: 0.9rem; }
       `}</style>
 
-      {/* Topbar */}
       <div className="topbar">
         <span className="topbar-logo">CODA<span>SCRAPER</span></span>
       </div>
 
       <div className="page-wrap">
 
-        {/* Heading + toggle */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", flexWrap:"wrap", gap:16 }}>
           <div>
             <motion.h1
@@ -668,7 +448,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Form */}
         <motion.div className="form-card" initial={{opacity:0,y:14}} animate={{opacity:1,y:0}} transition={{delay:0.1}}>
           <form onSubmit={handleScrape} className="form-grid">
             <div>
@@ -703,7 +482,6 @@ export default function App() {
           </form>
         </motion.div>
 
-        {/* Results */}
         <AnimatePresence mode="wait">
 
           {error && (
@@ -717,7 +495,6 @@ export default function App() {
 
           {products.length > 0 ? (
             <motion.div key="results" initial={{opacity:0}} animate={{opacity:1}}>
-
               <div className="results-header">
                 <div className="category-label">
                   {category.toUpperCase()}
@@ -776,7 +553,6 @@ export default function App() {
                   ))}
                 </div>
               )}
-
             </motion.div>
 
           ) : !loading && !error && (
