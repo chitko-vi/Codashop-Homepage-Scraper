@@ -34,15 +34,15 @@ export default function App() {
     setProducts([]);
 
     try {
-      // Call your own server — no CORS proxies needed.
-      // server.ts handles /api/scrape and launches Playwright to do the scraping.
+      // Call your own server — server.ts handles /api/scrape using Playwright.
+      // No CORS proxies needed because the request goes to localhost.
       const params = new URLSearchParams({ url, category });
-      const res = await fetch(`/api/scrape?${params}`);
+      const res = await fetch(`/api/scrape?${params.toString()}`);
       const data = await res.json();
 
       if (!res.ok) {
         const hint = data.found?.length
-          ? `\nCategories found on page: ${data.found.join(", ")}`
+          ? `\nAvailable categories: ${data.found.join(", ")}`
           : "";
         throw new Error((data.error || "Scrape failed") + hint);
       }
@@ -495,6 +495,7 @@ export default function App() {
 
           {products.length > 0 ? (
             <motion.div key="results" initial={{opacity:0}} animate={{opacity:1}}>
+
               <div className="results-header">
                 <div className="category-label">
                   {category.toUpperCase()}
@@ -553,6 +554,7 @@ export default function App() {
                   ))}
                 </div>
               )}
+
             </motion.div>
 
           ) : !loading && !error && (
