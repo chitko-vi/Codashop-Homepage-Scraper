@@ -19,7 +19,8 @@ async function startServer() {
       browser = await chromium.launch({ headless: true });
       const context = await browser.newContext({
         userAgent:
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
         viewport: { width: 1280, height: 800 },
       });
       const page = await context.newPage();
@@ -34,151 +35,139 @@ async function startServer() {
       console.log(`Navigating to ${url}...`);
       await page.goto(url as string, { waitUntil: "domcontentloaded", timeout: 60000 });
 
-      // Wait for at least one product-list to appear
-      await page
-        .waitForSelector(".product-list", { timeout: 15000 })
+      // Wait for product lists to render
+      await page.waitForSelector(".product-list", { timeout: 15000 })
         .catch(() => console.log("Timeout waiting for .product-list, continuing..."));
-
-      // ── Step 1: Find the right product-list by matching its title ───────────
-      //
-      // The real HTML structure from Codashop is:
-      //
-      //  <div class="product-list">
-      //    <div class="product-list__title">VOUCHERS</div>
-      //    <div class="grid-container">
-      //      <a class="product-tile" href="/en-ph/...">...</a>
-      //      <a class="product-tile" href="/en-ph/...">...</a>
-      //    </div>
-      //    <div class="expand-container">
-      //      <button class="expand-button">View All</button>
-      //    </div>
-      //  </div>
-      //
-      // So we find the .product-list whose .product-list__title matches our
-      // category, then click its .expand-button, then collect all .product-tile
-      // inside it. We never touch any other .product-list on the page.
 
       const categoryTarget = (category as string).trim().toUpperCase();
 
-      const sectionFound = await page.evaluate((target) => {
-        const allLists = Array.from(document.querySelectorAll(".product-list"));
-        for (const list of allLists) {
-          const titleEl = list.querySelector(".product-list__title");
-          if (!titleEl) continue;
-          const titleText = (titleEl.textContent || "")
-            .replace(/\s+/g, " ")
-            .trim()
-            .toUpperCase();
-          if (titleText === target) {
-            list.setAttribute("data-coda-target", "active-section");
-            return true;
-          }
-        }
-        return false;
-      }, categoryTarget);
+      // ── Step 1: Find the index of the matching .product-list ───────────────
+      //
+      // Real Codashop HTML structure (confirmed from actual page):
+      //
+      //   <div class="product-list">
+      //     <div class="product-list__title">VOUCHERS</div>
+      //     <div class="grid-container">
+      //       <a class="product-tile" href="/en-ph/...">
+      //         <img src="..." alt="Product Name">
+      //         <div class="product-name">Product Name</div>
+      //       </a>
+      //       ... more tiles ...
+      //     </div>
+      //     <div class="expand-container">
+      //       <button class="expand-button">View All</button>  ← may or may not exist
+      //     </div>
+      //   </div>
+      //   <div class="product-list">   ← next category, completely separate
+      //     <div class="product-list__title">GET YOUR CASHBACK</div>
+      //     ...
+      //   </div>
+      //
+      // Every category is its own isolated .product-list div.
+      // We find the one whose .product-list__title matches, then work
+      // ONLY inside that div. We never touch any other .product-list.
 
-      if (!sectionFound) {
-        // Tell the user what categories are actually available
-        const available = await page.evaluate(() => {
-          return Array.from(document.querySelectorAll(".product-list__title"))
-            .map((el) => (el.textContent || "").trim())
-            .filter(Boolean);
-        });
+      // Get all product-list titles to find the right index
+      const titles = await page.locator(".product-list__title").allTextContents();
+      const normalizedTitles = titles.map((t) => t.replace(/\s+/g, " ").trim().toUpperCase());
+      const sectionIndex = normalizedTitles.findIndex((t) => t === categoryTarget);
+
+      if (sectionIndex === -1) {
+        const available = titles.map((t) => t.trim()).filter(Boolean);
         return res.status(404).json({
           error: `Category "${category}" not found on this page.`,
           found: available,
         });
       }
 
-      // ── Step 2: Click "View All" / expand button inside this section only ───
+      console.log(`Found "${category}" at product-list index ${sectionIndex}`);
+
+      // Get the specific .product-list element at that index
+      const section = page.locator(".product-list").nth(sectionIndex);
+
+      // ── Step 2: Click "View All" / expand button if it exists ──────────────
       //
       // The button has class "expand-button" and sits inside "expand-container".
-      // We click it only if it exists inside our marked section.
-      // We do NOT look at button text — so this works in any language.
+      // We look for it ONLY inside our specific section locator.
+      // We click by class — never by text — so this works in every language.
 
-      const expandClicked = await page.evaluate(() => {
-        const section = document.querySelector('[data-coda-target="active-section"]');
-        if (!section) return false;
-        const btn = section.querySelector("button.expand-button") as HTMLElement | null;
-        if (!btn) return false;
-        btn.click();
-        return true;
-      });
+      const expandBtn = section.locator("button.expand-button");
+      const expandExists = await expandBtn.count();
 
-      if (expandClicked) {
-        console.log("Expand button clicked — waiting for hidden tiles to load...");
-        // Wait for new tiles to appear: poll until tile count stops growing
+      if (expandExists > 0) {
+        console.log("Expand button found — clicking...");
+        await expandBtn.first().scrollIntoViewIfNeeded();
+        await expandBtn.first().click();
+
+        // Wait for new tiles to appear by polling tile count
         let prevCount = 0;
-        for (let i = 0; i < 10; i++) {
-          await page.waitForTimeout(500);
-          const count = await page.evaluate(() => {
-            const section = document.querySelector('[data-coda-target="active-section"]');
-            return section ? section.querySelectorAll("a.product-tile").length : 0;
-          });
-          if (count > prevCount) {
-            prevCount = count;
-          } else {
-            break; // count stabilised — all tiles loaded
-          }
+        for (let i = 0; i < 20; i++) {
+          await page.waitForTimeout(400);
+          const count = await section.locator("a.product-tile").count();
+          console.log(`  Tile count after expand: ${count}`);
+          if (i > 0 && count === prevCount) break; // stable — done loading
+          prevCount = count;
         }
         console.log(`Tiles after expand: ${prevCount}`);
       } else {
-        console.log("No expand button found — using visible tiles only.");
+        console.log("No expand button — using all visible tiles.");
       }
 
-      // ── Step 3: Extract all product tiles from this section ONLY ────────────
+      // ── Step 3: Collect all product tiles from THIS section ONLY ───────────
       //
-      // We collect every a.product-tile inside our marked .product-list.
-      // Because we scoped to a single .product-list, tiles from other
-      // categories are physically impossible to appear here.
+      // section.locator("a.product-tile") is SCOPED to the section element.
+      // It physically cannot return tiles from any other .product-list.
 
-      const products = await page.evaluate(() => {
-        const section = document.querySelector('[data-coda-target="active-section"]');
-        if (!section) return { error: "Section marker lost" };
+      const tileCount = await section.locator("a.product-tile").count();
+      console.log(`Total tiles in section: ${tileCount}`);
 
-        const tiles = Array.from(section.querySelectorAll("a.product-tile")) as HTMLAnchorElement[];
-        const results: { title: string; url: string; image: string }[] = [];
-        const seen = new Set<string>();
+      const products: { title: string; url: string; image: string }[] = [];
+      const seen = new Set<string>();
 
-        for (const tile of tiles) {
-          const href = tile.href || "";
-          if (!href || seen.has(href)) continue;
+      for (let i = 0; i < tileCount; i++) {
+        const tile = section.locator("a.product-tile").nth(i);
 
-          // Title: prefer .product-name text, fall back to img alt
-          const nameEl = tile.querySelector(".product-name");
-          const imgEl  = tile.querySelector("img");
-          const title  =
-            (nameEl?.textContent || "").trim() ||
-            (imgEl?.getAttribute("alt") || "").trim();
-          if (!title) continue;
+        // URL
+        const href = await tile.getAttribute("href") || "";
+        if (!href || seen.has(href)) continue;
+        const fullUrl = href.startsWith("http")
+          ? href
+          : `https://www.codashop.com${href}`;
 
-          // Image: prefer src (already resolved by browser), fall back to srcset
-          let image = imgEl?.src || "";
-          if (!image && imgEl) {
-            const srcset = imgEl.getAttribute("srcset") || "";
+        // Title: .product-name is the most reliable, fall back to img alt
+        const nameEl = tile.locator(".product-name");
+        const nameCount = await nameEl.count();
+        let title = "";
+        if (nameCount > 0) {
+          title = (await nameEl.first().textContent() || "").trim();
+        }
+        if (!title) {
+          const imgEl = tile.locator("img");
+          if (await imgEl.count() > 0) {
+            title = (await imgEl.first().getAttribute("alt") || "").trim();
+          }
+        }
+        if (!title) continue;
+
+        // Image: get src from the img element (browser resolves it to absolute)
+        let image = "";
+        const imgEl = tile.locator("img");
+        if (await imgEl.count() > 0) {
+          image = await imgEl.first().getAttribute("src") || "";
+          // If src is empty try srcset first item
+          if (!image) {
+            const srcset = await imgEl.first().getAttribute("srcset") || "";
             image = srcset.split(",")[0].trim().split(" ")[0];
           }
-
-          seen.add(href);
-          results.push({ title, url: href, image });
         }
 
-        return results;
-      });
-
-      // Clean up marker
-      await page.evaluate(() => {
-        const el = document.querySelector('[data-coda-target="active-section"]');
-        if (el) el.removeAttribute("data-coda-target");
-      });
-
-      if (!Array.isArray(products)) {
-        return res.status(500).json({ error: (products as any).error || "Extraction failed" });
+        seen.add(href);
+        products.push({ title, url: fullUrl, image });
       }
 
       if (products.length === 0) {
         return res.status(404).json({
-          error: `"${category}" section found but no product tiles inside.`,
+          error: `"${category}" section found but contained no product tiles.`,
         });
       }
 
