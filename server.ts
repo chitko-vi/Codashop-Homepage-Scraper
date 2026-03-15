@@ -24,228 +24,139 @@ async function startServer() {
       });
       const page = await context.newPage();
 
-      // Block irrelevant requests to speed things up
+      // Block trackers to speed up loading
       await page.route("**/*", (route) => {
-        const reqUrl = route.request().url();
-        const blocked = ["wiz-iframe-intent", "intentPreview", "analytics", "gtm", "facebook", "hotjar"];
-        if (blocked.some((b) => reqUrl.includes(b))) return route.abort();
+        const blocked = ["analytics", "gtm", "facebook", "hotjar", "intentPreview"];
+        if (blocked.some((b) => route.request().url().includes(b))) return route.abort();
         return route.continue();
       });
 
       console.log(`Navigating to ${url}...`);
       await page.goto(url as string, { waitUntil: "domcontentloaded", timeout: 60000 });
 
-      // Remove any overlays/popups that could block interaction
-      await page.evaluate(() => {
-        ["#intentPreview", "wiz-iframe-intent", ".modal-backdrop", ".popup-overlay"].forEach((sel) => {
-          document.querySelectorAll(sel).forEach((el) => el.remove());
-        });
-        document.body.style.pointerEvents = "auto";
-        document.body.style.overflow = "auto";
-      });
-
-      // Wait for product tiles to appear
+      // Wait for at least one product-list to appear
       await page
-        .waitForSelector('a[data-testid="product-tile"], a[class*="product-tile"], a img', {
-          timeout: 15000,
-        })
-        .catch(() => console.log("No specific tile selector matched, continuing..."));
+        .waitForSelector(".product-list", { timeout: 15000 })
+        .catch(() => console.log("Timeout waiting for .product-list, continuing..."));
 
-      // ── Step 1: Find and mark the category header ───────────────────────────
-      const headerFound = await page.evaluate((categoryName) => {
-        const allEls = Array.from(document.querySelectorAll("*"));
-        for (const el of allEls) {
-          if (["SCRIPT", "STYLE", "HEAD"].includes(el.tagName)) continue;
+      // ── Step 1: Find the right product-list by matching its title ───────────
+      //
+      // The real HTML structure from Codashop is:
+      //
+      //  <div class="product-list">
+      //    <div class="product-list__title">VOUCHERS</div>
+      //    <div class="grid-container">
+      //      <a class="product-tile" href="/en-ph/...">...</a>
+      //      <a class="product-tile" href="/en-ph/...">...</a>
+      //    </div>
+      //    <div class="expand-container">
+      //      <button class="expand-button">View All</button>
+      //    </div>
+      //  </div>
+      //
+      // So we find the .product-list whose .product-list__title matches our
+      // category, then click its .expand-button, then collect all .product-tile
+      // inside it. We never touch any other .product-list on the page.
 
-          // Only check elements that are leaf-ish (not giant containers)
-          const meaningfulChildren = Array.from(el.children).filter(
-            (c) => !["BR", "SPAN", "B", "I", "EM", "STRONG"].includes(c.tagName)
-          );
-          if (meaningfulChildren.length > 2) continue;
+      const categoryTarget = (category as string).trim().toUpperCase();
 
-          const normalised = (el.textContent || "")
-            .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      const sectionFound = await page.evaluate((target) => {
+        const allLists = Array.from(document.querySelectorAll(".product-list"));
+        for (const list of allLists) {
+          const titleEl = list.querySelector(".product-list__title");
+          if (!titleEl) continue;
+          const titleText = (titleEl.textContent || "")
             .replace(/\s+/g, " ")
             .trim()
             .toUpperCase();
-
-          const target = categoryName
-            .replace(/[\u200B-\u200D\uFEFF]/g, "")
-            .replace(/\s+/g, " ")
-            .trim()
-            .toUpperCase();
-
-          if (normalised === target) {
-            el.setAttribute("data-coda-target", "category-header");
+          if (titleText === target) {
+            list.setAttribute("data-coda-target", "active-section");
             return true;
           }
         }
         return false;
-      }, category as string);
+      }, categoryTarget);
 
-      if (!headerFound) {
-        // Collect available headings to help the user
+      if (!sectionFound) {
+        // Tell the user what categories are actually available
         const available = await page.evaluate(() => {
-          const headings: string[] = [];
-          document.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((h) => {
-            const t = (h.textContent || "").trim();
-            if (t && t.length < 80) headings.push(t);
-          });
-          return headings.slice(0, 20);
+          return Array.from(document.querySelectorAll(".product-list__title"))
+            .map((el) => (el.textContent || "").trim())
+            .filter(Boolean);
         });
         return res.status(404).json({
-          error: `Category "${category}" not found on page`,
+          error: `Category "${category}" not found on this page.`,
           found: available,
         });
       }
 
-      // Scroll the header into view so expand buttons become interactive
-      const categoryHeader = page.locator('[data-coda-target="category-header"]').first();
-      await categoryHeader.scrollIntoViewIfNeeded();
-      await page.waitForTimeout(800);
+      // ── Step 2: Click "View All" / expand button inside this section only ───
+      //
+      // The button has class "expand-button" and sits inside "expand-container".
+      // We click it only if it exists inside our marked section.
+      // We do NOT look at button text — so this works in any language.
 
-      // ── Step 2: Click the expand / "View All" button if one exists ──────────
-      // We look for it ONLY inside the category's section, identified by DOM
-      // position — never by button label text so this works in any language.
-      const clicked = await page.evaluate(() => {
-        const header = document.querySelector('[data-coda-target="category-header"]');
-        if (!header) return false;
-
-        // Walk UP from header to find a section-like ancestor that contains buttons
-        let container = header.parentElement;
-        for (let i = 0; i < 10; i++) {
-          if (!container || container.tagName === "BODY") break;
-
-          const buttons = Array.from(container.querySelectorAll("button"));
-
-          // Find a button that looks like a "show more" control:
-          // - has visible text
-          // - no image inside (not a product card button)
-          // - short text (not a description)
-          const expandBtn = buttons.find((btn) => {
-            const txt = (btn.textContent || "").trim();
-            if (!txt || txt.length > 60 || btn.querySelector("img")) return false;
-            const cls = (btn.className || "").toLowerCase();
-            // Prefer buttons with expand-like class names
-            if (
-              cls.includes("expand") ||
-              cls.includes("view") ||
-              cls.includes("more") ||
-              cls.includes("all") ||
-              cls.includes("see")
-            ) return true;
-            // Also accept the only non-product button in the container
-            return buttons.filter((b) => {
-              const t = (b.textContent || "").trim();
-              return t.length > 0 && t.length < 60 && !b.querySelector("img");
-            }).length === 1;
-          });
-
-          if (expandBtn) {
-            (expandBtn as HTMLElement).click();
-            return true;
-          }
-
-          container = container.parentElement;
-        }
-        return false;
+      const expandClicked = await page.evaluate(() => {
+        const section = document.querySelector('[data-coda-target="active-section"]');
+        if (!section) return false;
+        const btn = section.querySelector("button.expand-button") as HTMLElement | null;
+        if (!btn) return false;
+        btn.click();
+        return true;
       });
 
-      if (clicked) {
-        console.log("Expand button clicked, waiting for tiles...");
-        await page.waitForTimeout(2000);
+      if (expandClicked) {
+        console.log("Expand button clicked — waiting for hidden tiles to load...");
+        // Wait for new tiles to appear: poll until tile count stops growing
+        let prevCount = 0;
+        for (let i = 0; i < 10; i++) {
+          await page.waitForTimeout(500);
+          const count = await page.evaluate(() => {
+            const section = document.querySelector('[data-coda-target="active-section"]');
+            return section ? section.querySelectorAll("a.product-tile").length : 0;
+          });
+          if (count > prevCount) {
+            prevCount = count;
+          } else {
+            break; // count stabilised — all tiles loaded
+          }
+        }
+        console.log(`Tiles after expand: ${prevCount}`);
+      } else {
+        console.log("No expand button found — using visible tiles only.");
       }
 
-      // Scroll to load any lazy images
-      await page.evaluate(() => window.scrollBy(0, 600));
-      await page.waitForTimeout(400);
-      await page.evaluate(() => window.scrollBy(0, 600));
-      await page.waitForTimeout(400);
-
-      // ── Step 3: Extract products scoped STRICTLY to this section ───────────
+      // ── Step 3: Extract all product tiles from this section ONLY ────────────
       //
-      // THE KEY FIX — previous bug:
-      // The old code walked up from the header to find a container with 2+ links.
-      // That container was often the entire page, so products from other categories
-      // leaked in.
-      //
-      // THE FIX — use compareDocumentPosition:
-      // This browser API tells us the exact DOM order relationship between any two
-      // nodes. We collect tiles that are:
-      //   (a) AFTER our category header in DOM order
-      //   (b) BEFORE the next h1-h6 heading in DOM order
-      // This works at any nesting depth, with any DOM structure, in any language.
+      // We collect every a.product-tile inside our marked .product-list.
+      // Because we scoped to a single .product-list, tiles from other
+      // categories are physically impossible to appear here.
 
       const products = await page.evaluate(() => {
-        const header = document.querySelector('[data-coda-target="category-header"]');
-        if (!header) return { error: "Header marker not found" };
+        const section = document.querySelector('[data-coda-target="active-section"]');
+        if (!section) return { error: "Section marker lost" };
 
-        // Find the next h1-h6 heading that comes after our header in DOM order
-        const allHeadings = Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6"));
-        const nextHeading = allHeadings.find((h) => {
-          // DOCUMENT_POSITION_FOLLOWING = 4 means h comes after header
-          return !!(header.compareDocumentPosition(h) & Node.DOCUMENT_POSITION_FOLLOWING);
-        }) || null;
-
-        // Collect all anchor tags that look like product tiles:
-        // - contain an image
-        // - link to a codashop.com product page (≥5 path segments)
-        // - not a terms/privacy/footer link
-        const allAnchors = Array.from(document.querySelectorAll("a")) as HTMLAnchorElement[];
-
-        const scopedTiles = allAnchors.filter((a) => {
-          // Must have an image child
-          if (!a.querySelector("img")) return false;
-
-          // Must be a product URL
-          const href = a.href || "";
-          if (!href.includes("codashop.com")) return false;
-          if (href.includes("terms") || href.includes("privacy") || href.includes("about")) return false;
-          if (href.split("/").length < 5) return false;
-
-          // Must come AFTER our header in DOM order
-          // DOCUMENT_POSITION_FOLLOWING = 4
-          const afterHeader = !!(header.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING);
-          if (!afterHeader) return false;
-
-          // Must come BEFORE the next section heading (if one exists)
-          if (nextHeading) {
-            // DOCUMENT_POSITION_PRECEDING = 2
-            const beforeNextHeading = !!(nextHeading.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_PRECEDING);
-            if (!beforeNextHeading) return false;
-          }
-
-          return true;
-        });
-
-        // Extract data from each scoped tile
+        const tiles = Array.from(section.querySelectorAll("a.product-tile")) as HTMLAnchorElement[];
         const results: { title: string; url: string; image: string }[] = [];
         const seen = new Set<string>();
 
-        for (const anchor of scopedTiles) {
-          const href = anchor.href;
-          if (seen.has(href)) continue;
+        for (const tile of tiles) {
+          const href = tile.href || "";
+          if (!href || seen.has(href)) continue;
 
-          const imgEl = anchor.querySelector("img") as HTMLImageElement | null;
-
-          // Title: alt text first, then any named text element inside the anchor
-          const altText = (imgEl?.alt || "").trim();
-          const textEl = anchor.querySelector(
-            "p, h3, [class*='name'], [class*='title'], span"
-          );
-          const innerText = (textEl?.textContent || "").trim();
-          const title = altText || innerText;
+          // Title: prefer .product-name text, fall back to img alt
+          const nameEl = tile.querySelector(".product-name");
+          const imgEl  = tile.querySelector("img");
+          const title  =
+            (nameEl?.textContent || "").trim() ||
+            (imgEl?.getAttribute("alt") || "").trim();
           if (!title) continue;
 
-          // Image: prefer data-src (lazy load) over src
-          let image = "";
-          if (imgEl) {
-            const srcset = imgEl.getAttribute("srcset") || imgEl.getAttribute("data-srcset") || "";
-            image =
-              imgEl.getAttribute("data-src") ||
-              imgEl.src ||
-              srcset.split(",")[0].trim().split(" ")[0] ||
-              "";
+          // Image: prefer src (already resolved by browser), fall back to srcset
+          let image = imgEl?.src || "";
+          if (!image && imgEl) {
+            const srcset = imgEl.getAttribute("srcset") || "";
+            image = srcset.split(",")[0].trim().split(" ")[0];
           }
 
           seen.add(href);
@@ -255,31 +166,34 @@ async function startServer() {
         return results;
       });
 
-      // Clean up the marker attribute
+      // Clean up marker
       await page.evaluate(() => {
-        document.querySelectorAll('[data-coda-target="category-header"]').forEach((el) => {
-          el.removeAttribute("data-coda-target");
-        });
+        const el = document.querySelector('[data-coda-target="active-section"]');
+        if (el) el.removeAttribute("data-coda-target");
       });
 
       if (!Array.isArray(products)) {
-        return res.status(500).json({
-          error: (products as any).error || "Unknown extraction error",
+        return res.status(500).json({ error: (products as any).error || "Extraction failed" });
+      }
+
+      if (products.length === 0) {
+        return res.status(404).json({
+          error: `"${category}" section found but no product tiles inside.`,
         });
       }
 
-      console.log(`Found ${products.length} products in "${category}"`);
-      res.json(products);
+      console.log(`Returning ${products.length} products for "${category}"`);
+      return res.json(products);
 
     } catch (error: any) {
       console.error("Scraping error:", error);
-      res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: error.message });
     } finally {
       if (browser) await browser.close();
     }
   });
 
-  // ── Vite dev / production static serving ─────────────────────────────────
+  // ── Dev / production static serving ──────────────────────────────────────
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
