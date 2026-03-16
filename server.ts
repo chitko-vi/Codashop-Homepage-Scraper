@@ -40,22 +40,77 @@ async function startServer() {
       await page.waitForSelector(".product-list", { timeout: 15000 })
         .catch(() => console.log("WARNING: .product-list not found after 15s"));
 
-      // ── MODE: all=true — scrape every category ─────────────────────────────
+      // ── MODE: all=true — scrape every category including hidden tiles ───────
       if (all === "true") {
+
+        // Step 1: Count how many sections exist
+        const sectionCount = await page.locator(".product-list").count();
+        console.log(`Found ${sectionCount} product-list sections`);
+
+        // Step 2: For each section, click its expand button if one exists.
+        // We do this BEFORE extracting so hidden tiles are revealed.
+        // We use Playwright's locator API (not page.evaluate) because we need
+        // to click and wait — page.evaluate can't do async waits between clicks.
+        for (let i = 0; i < sectionCount; i++) {
+          const section   = page.locator(".product-list").nth(i);
+          const expandBtn = section.locator("button.expand-button");
+
+          if (await expandBtn.count() > 0) {
+            const titleText = await section.locator(".product-list__title")
+              .textContent()
+              .catch(() => `section ${i}`);
+
+            const before = await section.locator("a.product-tile").count();
+            console.log(`[${titleText?.trim()}] Clicking expand button (${before} tiles visible)...`);
+
+            await expandBtn.first().scrollIntoViewIfNeeded();
+            await expandBtn.first().click();
+
+            // Wait for tile count to stabilise (new tiles loaded)
+            let prev   = before;
+            let stable = 0;
+            for (let attempt = 0; attempt < 10; attempt++) {
+              await page.waitForTimeout(500);
+              const now = await section.locator("a.product-tile").count();
+              if (now === prev) {
+                stable++;
+                if (stable >= 2) break; // stable twice = done loading
+              } else {
+                stable = 0;
+                prev   = now;
+              }
+            }
+
+            const after = await section.locator("a.product-tile").count();
+            console.log(`[${titleText?.trim()}] Tiles after expand: ${after}`);
+          }
+        }
+
+        // Step 3: Now extract all tiles from all sections.
+        // All expand buttons have been clicked so every tile is in the DOM.
         const results = await page.evaluate(() => {
           const allSections = Array.from(document.querySelectorAll(".product-list"));
-          const output: { category: string; position: number; title: string; url: string; image: string }[] = [];
+          const output: {
+            category: string;
+            position: number;
+            title:    string;
+            url:      string;
+            image:    string;
+          }[] = [];
 
           for (const section of allSections) {
-            const titleEl = section.querySelector(".product-list__title");
-            if (!titleEl) continue;
-            const categoryName = (titleEl.textContent || "").trim();
+            const titleEl      = section.querySelector(".product-list__title");
+            const categoryName = (titleEl?.textContent || "").trim();
             if (!categoryName) continue;
 
-            const tiles = Array.from(section.querySelectorAll("a.product-tile")) as HTMLAnchorElement[];
+            const tiles = Array.from(
+              section.querySelectorAll("a.product-tile")
+            ) as HTMLAnchorElement[];
+
             tiles.forEach((tile, index) => {
               const href = tile.getAttribute("href") || "";
               if (!href) return;
+
               const fullUrl = href.startsWith("http")
                 ? href
                 : `https://www.codashop.com${href}`;
@@ -77,11 +132,12 @@ async function startServer() {
                 category: categoryName,
                 position: index + 1,
                 title,
-                url: fullUrl,
+                url:   fullUrl,
                 image,
               });
             });
           }
+
           return output;
         });
 
@@ -89,15 +145,14 @@ async function startServer() {
           return res.status(404).json({ error: "No tiles found on this page." });
         }
 
-        console.log(`All-mode: returning ${results.length} total tiles`);
+        console.log(`All-mode: returning ${results.length} total tiles across ${sectionCount} sections`);
         return res.json(results);
       }
 
       // ── MODE: single category ──────────────────────────────────────────────
       const categoryTarget = (category as string).trim().toUpperCase();
 
-      // Find which .product-list matches
-      const allTitles = await page.locator(".product-list__title").allTextContents();
+      const allTitles  = await page.locator(".product-list__title").allTextContents();
       const normalised = allTitles.map((t) => t.replace(/\s+/g, " ").trim().toUpperCase());
       const sectionIndex = normalised.findIndex((t) => t === categoryTarget);
 
@@ -118,10 +173,9 @@ async function startServer() {
         const before = await section.locator("a.product-tile").count();
         await expandBtn.first().scrollIntoViewIfNeeded();
         await expandBtn.first().click();
-        console.log("Clicked expand button");
+        console.log(`Clicked expand button (${before} tiles before)`);
 
-        // Wait for tile count to stabilise
-        let prev = before;
+        let prev   = before;
         let stable = 0;
         for (let i = 0; i < 10; i++) {
           await page.waitForTimeout(500);
@@ -134,6 +188,8 @@ async function startServer() {
 
       // Extract tiles from this section only
       const tileCount = await section.locator("a.product-tile").count();
+      console.log(`Extracting ${tileCount} tiles for "${category}"...`);
+
       const products: { title: string; url: string; image: string }[] = [];
       const seen = new Set<string>();
 
@@ -147,7 +203,7 @@ async function startServer() {
           : `https://www.codashop.com${href}`;
 
         const nameEl = tile.locator(".product-name");
-        let title = "";
+        let title    = "";
         if (await nameEl.count() > 0) {
           title = (await nameEl.first().textContent() || "").trim();
         }
@@ -160,7 +216,7 @@ async function startServer() {
         if (!title) continue;
 
         const imgEl = tile.locator("img");
-        let image = "";
+        let image   = "";
         if (await imgEl.count() > 0) {
           image = await imgEl.first().getAttribute("src") || "";
           if (!image) {
