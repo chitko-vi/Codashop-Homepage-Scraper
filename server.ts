@@ -5,13 +5,16 @@ import path from "path";
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = 3000;
 
   app.get(["/scrape", "/api/scrape"], async (req, res) => {
-    const { url, category } = req.query;
+    const { url, category, all } = req.query;
 
-    if (!url || !category) {
-      return res.status(400).json({ error: "Missing url or category parameter" });
+    if (!url) {
+      return res.status(400).json({ error: "Missing url parameter" });
+    }
+    if (!all && !category) {
+      return res.status(400).json({ error: "Provide category=NAME or all=true" });
     }
 
     let browser;
@@ -25,7 +28,6 @@ async function startServer() {
       });
       const page = await context.newPage();
 
-      // Block trackers to speed up loading
       await page.route("**/*", (route) => {
         const blocked = ["analytics", "gtm", "facebook", "hotjar", "intentPreview"];
         if (blocked.some((b) => route.request().url().includes(b))) return route.abort();
@@ -35,110 +37,118 @@ async function startServer() {
       console.log(`Navigating to ${url}...`);
       await page.goto(url as string, { waitUntil: "domcontentloaded", timeout: 60000 });
 
-      // Wait for product lists to render
       await page.waitForSelector(".product-list", { timeout: 15000 })
-        .catch(() => console.log("Timeout waiting for .product-list, continuing..."));
+        .catch(() => console.log("WARNING: .product-list not found after 15s"));
 
+      // ── MODE: all=true — scrape every category ─────────────────────────────
+      if (all === "true") {
+        const results = await page.evaluate(() => {
+          const allSections = Array.from(document.querySelectorAll(".product-list"));
+          const output: { category: string; position: number; title: string; url: string; image: string }[] = [];
+
+          for (const section of allSections) {
+            const titleEl = section.querySelector(".product-list__title");
+            if (!titleEl) continue;
+            const categoryName = (titleEl.textContent || "").trim();
+            if (!categoryName) continue;
+
+            const tiles = Array.from(section.querySelectorAll("a.product-tile")) as HTMLAnchorElement[];
+            tiles.forEach((tile, index) => {
+              const href = tile.getAttribute("href") || "";
+              if (!href) return;
+              const fullUrl = href.startsWith("http")
+                ? href
+                : `https://www.codashop.com${href}`;
+
+              const nameEl = tile.querySelector(".product-name");
+              const imgEl  = tile.querySelector("img") as HTMLImageElement | null;
+              const title  =
+                (nameEl?.textContent || "").trim() ||
+                (imgEl?.getAttribute("alt") || "").trim();
+              if (!title) return;
+
+              let image = imgEl?.getAttribute("src") || "";
+              if (!image && imgEl) {
+                const srcset = imgEl.getAttribute("srcset") || "";
+                image = srcset.split(",")[0].trim().split(" ")[0];
+              }
+
+              output.push({
+                category: categoryName,
+                position: index + 1,
+                title,
+                url: fullUrl,
+                image,
+              });
+            });
+          }
+          return output;
+        });
+
+        if (!Array.isArray(results) || results.length === 0) {
+          return res.status(404).json({ error: "No tiles found on this page." });
+        }
+
+        console.log(`All-mode: returning ${results.length} total tiles`);
+        return res.json(results);
+      }
+
+      // ── MODE: single category ──────────────────────────────────────────────
       const categoryTarget = (category as string).trim().toUpperCase();
 
-      // ── Step 1: Find the index of the matching .product-list ───────────────
-      //
-      // Real Codashop HTML structure (confirmed from actual page):
-      //
-      //   <div class="product-list">
-      //     <div class="product-list__title">VOUCHERS</div>
-      //     <div class="grid-container">
-      //       <a class="product-tile" href="/en-ph/...">
-      //         <img src="..." alt="Product Name">
-      //         <div class="product-name">Product Name</div>
-      //       </a>
-      //       ... more tiles ...
-      //     </div>
-      //     <div class="expand-container">
-      //       <button class="expand-button">View All</button>  ← may or may not exist
-      //     </div>
-      //   </div>
-      //   <div class="product-list">   ← next category, completely separate
-      //     <div class="product-list__title">GET YOUR CASHBACK</div>
-      //     ...
-      //   </div>
-      //
-      // Every category is its own isolated .product-list div.
-      // We find the one whose .product-list__title matches, then work
-      // ONLY inside that div. We never touch any other .product-list.
-
-      // Get all product-list titles to find the right index
-      const titles = await page.locator(".product-list__title").allTextContents();
-      const normalizedTitles = titles.map((t) => t.replace(/\s+/g, " ").trim().toUpperCase());
-      const sectionIndex = normalizedTitles.findIndex((t) => t === categoryTarget);
+      // Find which .product-list matches
+      const allTitles = await page.locator(".product-list__title").allTextContents();
+      const normalised = allTitles.map((t) => t.replace(/\s+/g, " ").trim().toUpperCase());
+      const sectionIndex = normalised.findIndex((t) => t === categoryTarget);
 
       if (sectionIndex === -1) {
-        const available = titles.map((t) => t.trim()).filter(Boolean);
+        const available = allTitles.map((t) => t.trim()).filter(Boolean);
         return res.status(404).json({
           error: `Category "${category}" not found on this page.`,
           found: available,
         });
       }
 
-      console.log(`Found "${category}" at product-list index ${sectionIndex}`);
-
-      // Get the specific .product-list element at that index
+      console.log(`Found "${category}" at index ${sectionIndex}`);
       const section = page.locator(".product-list").nth(sectionIndex);
 
-      // ── Step 2: Click "View All" / expand button if it exists ──────────────
-      //
-      // The button has class "expand-button" and sits inside "expand-container".
-      // We look for it ONLY inside our specific section locator.
-      // We click by class — never by text — so this works in every language.
-
+      // Click expand button if present (scoped to this section only)
       const expandBtn = section.locator("button.expand-button");
-      const expandExists = await expandBtn.count();
-
-      if (expandExists > 0) {
-        console.log("Expand button found — clicking...");
+      if (await expandBtn.count() > 0) {
+        const before = await section.locator("a.product-tile").count();
         await expandBtn.first().scrollIntoViewIfNeeded();
         await expandBtn.first().click();
+        console.log("Clicked expand button");
 
-        // Wait for new tiles to appear by polling tile count
-        let prevCount = 0;
-        for (let i = 0; i < 20; i++) {
-          await page.waitForTimeout(400);
-          const count = await section.locator("a.product-tile").count();
-          console.log(`  Tile count after expand: ${count}`);
-          if (i > 0 && count === prevCount) break; // stable — done loading
-          prevCount = count;
+        // Wait for tile count to stabilise
+        let prev = before;
+        let stable = 0;
+        for (let i = 0; i < 10; i++) {
+          await page.waitForTimeout(500);
+          const now = await section.locator("a.product-tile").count();
+          if (now === prev) { stable++; if (stable >= 2) break; }
+          else { stable = 0; prev = now; }
         }
-        console.log(`Tiles after expand: ${prevCount}`);
-      } else {
-        console.log("No expand button — using all visible tiles.");
+        console.log(`Tiles after expand: ${prev}`);
       }
 
-      // ── Step 3: Collect all product tiles from THIS section ONLY ───────────
-      //
-      // section.locator("a.product-tile") is SCOPED to the section element.
-      // It physically cannot return tiles from any other .product-list.
-
+      // Extract tiles from this section only
       const tileCount = await section.locator("a.product-tile").count();
-      console.log(`Total tiles in section: ${tileCount}`);
-
       const products: { title: string; url: string; image: string }[] = [];
       const seen = new Set<string>();
 
       for (let i = 0; i < tileCount; i++) {
         const tile = section.locator("a.product-tile").nth(i);
-
-        // URL
         const href = await tile.getAttribute("href") || "";
         if (!href || seen.has(href)) continue;
+
         const fullUrl = href.startsWith("http")
           ? href
           : `https://www.codashop.com${href}`;
 
-        // Title: .product-name is the most reliable, fall back to img alt
         const nameEl = tile.locator(".product-name");
-        const nameCount = await nameEl.count();
         let title = "";
-        if (nameCount > 0) {
+        if (await nameEl.count() > 0) {
           title = (await nameEl.first().textContent() || "").trim();
         }
         if (!title) {
@@ -149,12 +159,10 @@ async function startServer() {
         }
         if (!title) continue;
 
-        // Image: get src from the img element (browser resolves it to absolute)
-        let image = "";
         const imgEl = tile.locator("img");
+        let image = "";
         if (await imgEl.count() > 0) {
           image = await imgEl.first().getAttribute("src") || "";
-          // If src is empty try srcset first item
           if (!image) {
             const srcset = await imgEl.first().getAttribute("srcset") || "";
             image = srcset.split(",")[0].trim().split(" ")[0];
@@ -175,14 +183,14 @@ async function startServer() {
       return res.json(products);
 
     } catch (error: any) {
-      console.error("Scraping error:", error);
+      console.error("Scraping error:", error.message);
       return res.status(500).json({ error: error.message });
     } finally {
       if (browser) await browser.close();
     }
   });
 
-  // ── Dev / production static serving ──────────────────────────────────────
+  // ── Vite dev / production static serving ─────────────────────────────────
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
